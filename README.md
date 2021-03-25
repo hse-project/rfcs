@@ -44,4 +44,41 @@ maintainers can give their opinion on whether or not your RFC is worth pursuing.
 
 In order to submit an RFC, please follow the following guidelines:
 
-## RFC Lifecycle
+1. Gather opinions of HSE maintainers in order to make sure the RFC is not dead
+  on arrival.
+1. Fork this repo.
+1. Copy the template located at the root of this repository to `rfcs/$project`
+  where `$project` is what part of the ecosystem your RFC pertains to.
+1. Rename the file...TBD on template name format.
+1. Begin filling out the template content.
+1. Once completed, open a PR from your fork to this repository.
+
+### Lifecycle
+
+Now that the RFC has been submitted, stakeholders, maintainers, and developers
+will have the opportunity to comment and suggest changes to make the RFC the
+best it can be. Please iterate on any comments that may be given, and feel free
+to discuss why certain comments were made.
+
+Once all comments have been resolved and discussion has reached a point of
+consensus, the RFC will enter a final comment period. This final comment period
+signifies to others that a decision will be made about the RFC soon (TODO:
+should this be a hard length of time?).
+
+After any potential discussion has been resolved in the final comment period,
+the maintainers of the project the RFC pertains to will vote on whether your RFC
+has been accepted. In this case, a successful vote means a quorum of maintainers
+voted yes on the RFC (TODO: should this be all maintainers? should major
+stakeholders get a vote like red hat if HSE+Ceph works out?).
+
+In the case the RFC has been accepted, the PR will be merged. The RFC being
+accepted means that the implementation will be prioritized around existing work
+and work that is coming up on the road-map (TODO: link to a public road-map?).
+External contributors or stakeholders are welcome to implement the RFC
+themselves if the work is not prioritized to their liking. The accepted RFC will
+then get a tracking issue on the repository of the project with a link to the
+RFC (TODO: create a github issue template for this).
+
+In the case the RFC has been denied, the PR will be declined. It is important to
+understand that not all RFCs can be accepted. Reasons for declining an RFC could
+be feature bloat, a disagreement with the final approach, or scope.
