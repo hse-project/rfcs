@@ -18,13 +18,14 @@ When determining whether you should submit an RFC, use the following criteria:
 - Any backwards-incompatible change including breaks of either the API or the
   ABI
 - Additions to the API
+- Major or significant internal change
 - Changes to the RFC process
 
 The following cases most likely do not require an RFC:
 
 - Changes that are likely to only be visible to HSE developers themselves,
   not user-facing
-- Reorganization or refactoring of code
+- Minor reorganization or refactoring of code
 - Additions that would reduce and strictly improve numerical criteria like
   warnings, speed optimization, binary sizes, etc.
 
