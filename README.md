@@ -1,6 +1,6 @@
 # HSE RFCs
 
-This repo tracks RFCs (request for comment) for all project under the
+This repo tracks RFCs (request for comment) for all projects under
 [`hse-project`](https://github.com/hse-project).
 
 ## Purpose
@@ -18,7 +18,9 @@ When determining whether you should submit an RFC, use the following criteria:
 - Any backwards-incompatible change including breaks of either the API or the
   ABI
 - Additions to the API
-- Major or significant internal change
+- Major or significant internal change which would significantly and negatively
+  impact performance characteristics including throughput, latency,
+  read/write-amplification, and memory (DRAM) consumption
 - Changes to the RFC process
 
 The following cases most likely do not require an RFC:
@@ -26,6 +28,7 @@ The following cases most likely do not require an RFC:
 - Changes that are likely to only be visible to HSE developers themselves,
   not user-facing
 - Minor reorganization or refactoring of code
+- Bug fixes
 - Additions that would reduce and strictly improve numerical criteria like
   warnings, speed optimization, binary sizes, etc.
 
@@ -38,20 +41,23 @@ RFC has been proposed before and been previously rejected. It is also important
 to solicit maintainer feedback early on in your ideation process. Open a
 [discussion](https://github.com/hse-project/hse/discussions) on the main
 [HSE repository](https://github.com/hse-project/hse) about your idea, and
-maintainers can give their opinion on whether or not your RFC is worth pursuing.
+maintainers can give their opinion on whether or not your RFC is aligned to the
+goals of the project and likely to be accepted.
 
 ## RFC Process
 
-In order to submit an RFC, please follow the following guidelines:
+In order to submit an RFC, please adhere to the following guidelines:
 
-1. Gather opinions of HSE maintainers in order to make sure the RFC is not dead
-  on arrival.
+1. Gather opinions of HSE maintainers as described above.
+1. Open a tracking issue in this repository regarding the RFC.
 1. Fork this repo.
 1. Copy the template located at the root of this repository to `rfcs/$project`
-  where `$project` is what part of the ecosystem your RFC pertains to.
-1. Rename the file...TBD on template name format.
+  where `$project` is what part of the HSE ecosystem your RFC pertains to.
+1. Rename the file to `(issue-number)-(lowercase-title-of-rfc).md`. Leave the
+  issue number with leading zeros if necessary.
 1. Begin filling out the template content.
-1. Once completed, open a PR from your fork to this repository.
+1. Once completed, open a PR from your fork to this repository. Put in the
+  description of the PR
 
 ### Lifecycle
 
@@ -61,19 +67,16 @@ best it can be. Please iterate on any comments that may be given, and feel free
 to discuss why certain comments were made.
 
 Once all comments have been resolved and discussion has reached a point of
-consensus, the RFC will enter a final comment period. This final comment period
-signifies to others that a decision will be made about the RFC soon (TODO:
-should this be a hard length of time?).
+consensus, the author will mark the corresponding issue in this repository as
+ready for a final comment period. This final comment period signifies to others
+that a decision will be made about the RFC soon (TODO: should this be a hard
+length of time?).
 
 After any potential discussion has been resolved in the final comment period,
-the maintainers of the project the RFC pertains to will vote on whether your RFC
-has been accepted. In this case, a successful vote means a quorum of maintainers
-voted yes on the RFC (TODO: should this be all maintainers? should major
-stakeholders get a vote like red hat if HSE+Ceph works out?).
+the maintainers of the project will decide on whether or not to accept the RFC.
 
 In the case the RFC has been accepted, the PR will be merged. The RFC being
-accepted means that the implementation will be prioritized around existing work
-and work that is coming up on the road-map (TODO: link to a public road-map?).
+accepted means that the implementation will be prioritized by the maintainers.
 External contributors or stakeholders are welcome to implement the RFC
 themselves if the work is not prioritized to their liking. The accepted RFC will
 then get a tracking issue on the repository of the project with a link to the
@@ -81,4 +84,5 @@ RFC (TODO: create a github issue template for this).
 
 In the case the RFC has been denied, the PR will be declined. It is important to
 understand that not all RFCs can be accepted. Reasons for declining an RFC could
-be feature bloat, a disagreement with the final approach, or scope.
+be could be misalignment with project goals, negative impact to performance, or
+API/ABI breakage, among others.
