@@ -8,8 +8,8 @@ This repo tracks RFCs (request for comment) for all projects under
 Although HSE uses issues and pull requests to implement and coordinate
 development, some changes require more thorough consideration with an
 opportunity for various stake holders to provide input on how the proposed
-changes affect them. The RFC (request for comments) process intends to provide
-a consistent and controlled way of developing HSE for the benefit of all.
+changes affect them. The RFC (request for comments) process intends to provide a
+consistent and controlled way of developing HSE for the benefit of all.
 
 ## When to use an RFC
 
@@ -25,8 +25,8 @@ When determining whether you should submit an RFC, use the following criteria:
 
 The following cases most likely do not require an RFC:
 
-- Changes that are likely to only be visible to HSE developers themselves,
-  not user-facing
+- Changes that are likely to only be visible to HSE developers themselves, not
+  user-facing
 - Minor reorganization or refactoring of code
 - Bug fixes
 - Additions that would reduce and strictly improve numerical criteria like
@@ -52,12 +52,12 @@ In order to submit an RFC, please adhere to the following guidelines:
 1. Open a tracking issue in this repository regarding the RFC.
 1. Fork this repo.
 1. Copy the template located at the root of this repository to `rfcs/$project`
-  where `$project` is what part of the HSE ecosystem your RFC pertains to.
+   where `$project` is what part of the HSE ecosystem your RFC pertains to.
 1. Rename the file to `(issue-number)-(lowercase-title-of-rfc).md`. Leave the
-  issue number with leading zeros if necessary.
+   issue number with leading zeros if necessary.
 1. Begin filling out the template content.
 1. Once completed, open a PR from your fork to this repository. Put in the
-  description of the PR
+   description of the PR
 
 ### Lifecycle
 
