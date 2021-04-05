@@ -228,20 +228,20 @@ hse_initv(NULL, N_ELEMS(keys), keys, values);
 
 ```c
 hse_err_t
-hse_kvdb_make(const char *parameter, ...) __attribute__((sentinel));
+hse_kvdb_make(const char *name, ...) __attribute__((sentinel));
 ```
 
 Usage:
 
 ```c
-hse_kvdb_make(HSE_CONF_KVDB_DUR_CAPACITY, "5", NULL);
+hse_kvdb_make("kvdb1", HSE_CONF_KVDB_DUR_CAPACITY, "5", NULL);
 ```
 
 - `hse_kvdb_makev()`
 
 ```c
 hse_err_t
-hse_kvdb_makev(const char *parameter, size_t nelem, const char **keys, const char **values) __attribute__((sentinel));
+hse_kvdb_makev(const char *name, size_t nelem, const char **keys, const char **values) __attribute__((sentinel));
 ```
 
 Usage:
@@ -250,7 +250,7 @@ Usage:
 const char *keys[] = { HSE_CONF_KVDB_DUR_CAPACITY };
 const char *values[] = { "5" };
 assert(sizeof(keys) == sizeof(values));
-hse_kvdb_makev(NULL, N_ELEMS(keys), keys, values);
+hse_kvdb_makev("kvdb1", N_ELEMS(keys), keys, values);
 ```
 
 #### Making a KVS
