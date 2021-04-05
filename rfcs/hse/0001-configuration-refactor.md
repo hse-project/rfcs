@@ -62,7 +62,7 @@ the case of MySQL this would be something like `/var/lib/mysql/`.
 ```shell
 $ tree /var/lib/mysql
 /var/lib/mysql
-├── hse.yaml
+├── hse.conf
 ├── hse.log
 ├── hse.sock
 └── kvdb1
@@ -184,11 +184,11 @@ user experience.
 
 ```c
 // hse/hse.h
-#define HSE_LOGGING_ENABLED "logging.enabled"
-#define HSE_KVDB_READ_ONLY "read_only"
-#define HSE_KVDB_DUR_CAPACITY "dur_capacity"
-#define HSE_KVS_CP_FANOUT "cp_fanout"
-#define HSE_KVS_CN_MAINT_DELAY "cn_main_delay"
+#define HSE_CONF_LOGGING_ENABLED "logging.enabled"
+#define HSE_CONF_KVDB_READ_ONLY "read_only"
+#define HSE_CONF_KVDB_DUR_CAPACITY "dur_capacity"
+#define HSE_CONF_KVS_CP_FANOUT "cp_fanout"
+#define HSE_CONF_KVS_CN_MAINT_DELAY "cn_main_delay"
 ```
 
 #### Initializing HSE
@@ -203,7 +203,7 @@ hse_init(const char *path_to_root, ...) __attribute__(sentinel));
 Usage:
 
 ```c
-hse_init("/var/lib/mysql/", HSE_LOGGING_ENABLED, "true", NULL);
+hse_init("/var/lib/mysql/", HSE_CONF_LOGGING_ENABLED, "true", NULL);
 ```
 
 - `hse_initv()`[^1]
@@ -216,7 +216,7 @@ hse_initv(const char *path_to_root, size_t nelem, const char *keys, const char *
 Usage:
 
 ```c
-const char *keys[] = { HSE_LOGGING_ENABLED };
+const char *keys[] = { HSE_CONF_LOGGING_ENABLED };
 const char *values[] = { "true" };
 assert(sizeof(keys) == sizeof(values));
 hse_initv(NULL, N_ELEMS(keys), keys, values);
@@ -234,7 +234,7 @@ hse_kvdb_make(const char *parameter, ...) __attribute__((sentinel));
 Usage:
 
 ```c
-hse_kvdb_make(HSE_KVDB_DUR_CAPACITY, "5", NULL);
+hse_kvdb_make(HSE_CONF_KVDB_DUR_CAPACITY, "5", NULL);
 ```
 
 - `hse_kvdb_makev()`
@@ -247,7 +247,7 @@ hse_kvdb_makev(const char *parameter, size_t nelem, const char **keys, const cha
 Usage:
 
 ```c
-const char *keys[] = { HSE_KVDB_DUR_CAPACITY };
+const char *keys[] = { HSE_CONF_KVDB_DUR_CAPACITY };
 const char *values[] = { "5" };
 assert(sizeof(keys) == sizeof(values));
 hse_kvdb_makev(NULL, N_ELEMS(keys), keys, values);
