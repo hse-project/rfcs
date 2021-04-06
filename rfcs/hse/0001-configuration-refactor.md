@@ -228,20 +228,20 @@ hse_initv(NULL, N_ELEMS(keys), keys, values);
 
 ```c
 hse_err_t
-hse_kvdb_make(const char *name, ...) __attribute__((sentinel));
+hse_kvdb_make(const char *name, const char *path_to_root, ...) __attribute__((sentinel));
 ```
 
 Usage:
 
 ```c
-hse_kvdb_make("kvdb1", HSE_CONF_KVDB_DUR_CAPACITY, "5", NULL);
+hse_kvdb_make("kvdb1", NULL, HSE_CONF_KVDB_DUR_CAPACITY, "5", NULL);
 ```
 
 - `hse_kvdb_makev()`
 
 ```c
 hse_err_t
-hse_kvdb_makev(const char *name, size_t nelem, const char **keys, const char **values) __attribute__((sentinel));
+hse_kvdb_makev(const char *name, const char *path_to_root, size_t nelem, const char **keys, const char **values);
 ```
 
 Usage:
@@ -250,7 +250,7 @@ Usage:
 const char *keys[] = { HSE_CONF_KVDB_DUR_CAPACITY };
 const char *values[] = { "5" };
 assert(sizeof(keys) == sizeof(values));
-hse_kvdb_makev("kvdb1", N_ELEMS(keys), keys, values);
+hse_kvdb_makev("kvdb1", NULL, N_ELEMS(keys), keys, values);
 ```
 
 #### Making a KVS
@@ -267,13 +267,21 @@ Similar to `hse_kvdb_makev()`.
 
 - `hse_kvdb_open()`
 
+```c
+hse_kvdb_open(const char *name, const char *path_to_root, ...) __attribute__((sentinel));
+```
+
 Usage:
 
-```cpp
-hse_kvdb_open(NULL, HSE_KVDB_READ_ONLY, "true", NULL);
+```c
+hse_kvdb_open("kvdb1", NULL, HSE_KVDB_READ_ONLY, "true", NULL);
 ```
 
 - `hse_kvdb_openv()`
+
+```c
+hse_kvdb_openv(const char *name, const char *path_to_root, size_t nelem, const char **keys, const char **values);
+```
 
 Usage:
 
