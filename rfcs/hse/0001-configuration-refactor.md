@@ -254,3 +254,6 @@ configuration.
   `hse_init()`, but was instead purely static? `hse_init()` would then take an
   `hse_config` object. If we could pull that off, logging could begin much
   earlier in the HSE lifecycle.
+- Tom made a mention of RockDB's logging API:
+  https://github.com/facebook/rocksdb/wiki/Logger
+  - Is it worth doing something similar?
