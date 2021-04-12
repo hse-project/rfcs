@@ -92,10 +92,9 @@ to their liking.
 
 ##### Config String Format
 
-The config string will be a JSON-formatted string as opposed to WT, which seems
-to have a custom format for their string. We already have a dependency on cJSON
-so this should not be anything new. The config string format should feel pretty
-similar to our previous config file format.
+The config string will be a JSON-formatted string. We already have a dependency
+on cJSON so this should not be anything new. The config string format should
+feel pretty similar to our previous config file format.
 
 All KVDB parameters will be located under the `kvdb` keyword and under the name
 of the KVDB. KVS parameters will be located under the `kvs` key, which is
