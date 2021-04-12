@@ -126,6 +126,46 @@ within the `kvs` keyword. KVS-specific parameters will override any listed under
 }
 ```
 
+##### Media Class Storage
+
+Schema:
+
+```jsonc
+{
+  "kvdb": {
+    "kvdb1": {
+      "storage": {
+        "staging": {
+          "path": "string"
+        },
+        "capacity": {
+          "path": "string"
+        }
+      }
+    }
+  }
+}
+```
+
+Default Configuration:
+
+```jsonc
+{
+  "kvdb": {
+    "kvdb1": {
+      "storage": {
+        "staging": {
+          "path": "$PWD/kvdb1/staging"
+        },
+        "capacity": {
+          "path": "$PWD/kvdb1/capacity"
+        }
+      }
+    }
+  }
+}
+```
+
 ##### Logging
 
 Schema:
