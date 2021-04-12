@@ -2,34 +2,25 @@
 
 ## Problem
 
-HSE 2.0 will introduce new ways of configuring HSE including a new config file
-schema and the introduction of environment variables. In order to support this
-new flow, the configuration code needs to be refactored to take these new
-requirements into account.
+HSE 2.0 needs to support configuration strategies that are inline with other
+embedded libraries, convenient for application developers, container-friendly,
+and open to advanced configuration by end-users.
 
 ## Requirements
 
 - HSE should be usable with sane defaults
 - Support more that one KVDB open at any time in the future without breaking
   current configuration
-- Change config file schema to support forward compatibility
-- Allow for hierarchical configuration (most important to least important)
-  1. Call-site configuration
-  2. Environment configuration (Include a way to disable reading environment
-     variables entirely)
-  3. Config file
-  4. Default values
+- Remove configuration files
 - Remove notion of workload profiles
-- Add APIs to introspect HSE configuration options
-- Add CLI command to validate configuration file
-- Configure logging such that all logs go to a single location
-- Configure logging such that it can only be structured or not for the whole
-  KVDB
+- Allow configuration only at call-site with opportunity for extension that can
+  be exposed by application developers to end users
 
 ## Non-Requirements
 
-- Implement support multiple KVDBs per process
+- Implement support for multiple KVDBs per process
 - Configure `syslog` for users
+- Implement support for environment variables of any kind
 
 ## Solution
 
@@ -43,41 +34,68 @@ added/updates will also be updated.
 
 #### Sane Defaults
 
-Defaults will be taken from current default except in the case of `HSE_ROOT`.
-That will be the current working directory.
-
-#### Supporting Multiple KVDBs per Process (Config POV)
-
-In order to be forward compatible with ourselves, we need the config format and
-how `HSE_ROOT` is laid out to be constructed in such a way that adding and
-supporting multiple open KVDBs per process won't break any APIs, file formats,
-or directory structure.
-
-##### `HSE_ROOT`
-
-`HSE_ROOT` is an environment variable which sets the HSE working directory. All
-artifacts that HSE creates including logs and data files will be stored here. In
-the case of MySQL this would be something like `/var/lib/mysql/`.
+Current defaults will stay the same and any path-based configuration like
+locations of artifacts will use the current working directory. Within the
+current working directory, each KVDB within a process will produce a directory
+for all of its artifacts, and it will be named with the name of the KVDB.
 
 ```shell
-$ tree /var/lib/mysql
-/var/lib/mysql
-├── hse.conf
-├── hse.log
-├── hse.sock
-└── kvdb1
-    ├── staging
-    └── capacity
+$PWD/kvdb1
 ```
 
-With this directory structure, KVDBs have to go back to being named, but this
-allows for forward compatibility of multiple KVDBs. KVDBs will share a single
-log file, config file, and UNIX socket. This will require us to clean up the
-REST routes of the HTTP server to key off of the KVDB name, but given enough
-time, this is doable. Log messages will include the KVDB name of which they
-apply to, so it should relatively easy to filter messages appropriately.
+##### Locations of KVDB Artifacts
 
-##### Config File Schema
+KVDB artifacts can be defined as objects a KVDB create within the file system.
+Those would include the following:
+
+- the sock file
+- any data files
+
+These artifacts by default will go in `$PWD/$kvdb_name`.
+
+```shell
+$ tree kvdb1
+kvdb1
+├── hse.sock # or kvdb.sock?
+├── staging/
+└── capacity/
+```
+
+The socket file by default will be named `hse.sock`, but the path will be
+configurable. The media class directory paths will each be individually
+configurable as well.
+
+##### Location of Log File
+
+All KVDBs within a process will share a single log location. By default, that
+location will be the current working directory in a file called `hse.log`. The
+path for the log file will also be configurable. All log messages will be
+accompanied by the name of the KVDB that they pertain to as to make it easy to
+grep for messages pertaining to each KVDB.
+
+#### HSE Config at the Application Level
+
+HSE exists to be embedded into applications. Applications need to be the primary
+force when it comes to how HSE should be configured while leaving avenues for
+end users to have a say. The best way to do this is for application developers
+to expose HSE configuration options at the application level. In MongoDB's case,
+HSE options that MongoDB wants to expose would belong in the `mongodb.conf` file
+right next to general MongoDB options. MongoDB will only want to expose stable
+configuration options however. For experimental configuration options, we can
+use a raw configuration string.
+
+WiredTiger supports a notion of a config string, which it parses into various
+configuration values. MongoDB exposes an option to pass a raw WiredTiger
+configuration string. MongoDB should in theory do the same thing with HSE.
+Advanced end users could then use experimental configuration options to tune HSE
+to their liking.
+
+##### Config String Format
+
+The config string will be a JSON-formatted string as opposed to WT, which seems
+to have a custom format for their string. We already have a dependency on cJSON
+so this should not be anything new. The config string format should feel pretty
+similar to our previous config file format.
 
 All KVDB parameters will be located under the `kvdb` keyword and under the name
 of the KVDB. KVS parameters will be located under the `kvs` key, which is
@@ -87,93 +105,88 @@ be named `default`. KVS-specific parameters will exist under the name of KVS
 within the `kvs` keyword. KVS-specific parameters will override any listed under
 `default`.
 
-Example:
-
-```yaml
-kvdb:
-  kvdb1:
-    read_only: true
-    kvs:
-      kvs1:
-        cn_maint_delay: 10
-      kvs2:
-        cn_node_size_lo: 20
-      default:
-        cn_main_delay: 5
+```jsonc
+{
+  "logging": {
+    // Later in document
+  },
+  "kvdb": {
+    "kvdb1": {
+      "my_kvdb_param": true,
+      "kvs": {
+        "default": {
+          "my_kvs_param": 1
+        },
+        "kvs1": {
+          "my_kvs_param": 1
+        }
+      }
+    }
+  }
+}
 ```
 
-#### Environment Variables
+##### Logging
 
-Environment variables are very important for being container friendly and
-allowing easy configuration of HSE by end users. They allow for reconfiguration
-without recompiling and without editing a configuration file. The naming scheme
-of environment variables will be a prefix of `HSE_` and the configuration key
-where `.` is changed to `_`. If I was going to set `logging.enabled` through the
-environment it would look like `HSE_LOGGING_ENABLED`. For `kvdb.read_only`, it
-would be `HSE_KVDB_READ_ONLY`. For setting `kvdb.kvs.cn_maint_delay`, it would
-be `HSE_KVDB_KVS_CN_MAINT_DELAY` (`kvs` is under `kvdb` in this new format). For
-setting a KVS-specific parameter, wrap the KVS name in 2 underscores on either
-side like so, `HSE_KVDB_KVS__KVS1__CN_MAINT_DELAY`. Since we want to be future
-forward, the following is equivalent for now,
-`HSE_KVDB__KVDB1__KVS__KVS1__CN_MAINT_DELAY`. Notice how the KVDB name has been
-wrapped in double underscores similar to the KVS name. The double underscores
-should make the variable easy to parse from a visual and a libhse perspective.
+Schema:
 
-#### Logging
-
-##### Schema
-
-```yaml
-logging:
-  enabled: on | off
-  structured: on | off
-  destination: file | syslog | stdout | stderr
-  path: when destination == file
-  level: [0, 7] # support string style as well?
+```jsonc
+{
+  "logging": {
+    "enabled": "boolean",
+    "structured": "boolean",
+    "destination": "file | syslog | stdout | stderr",
+    "path": "when destination == file",
+    "level": "[0 - 7]" // support string style as well?
+  }
+}
 ```
 
-##### Default Configuration
+Default Configuration:
 
-```yaml
-logging:
-  enabled: on
-  structured: off
-  destination: file
-  path: hse.log
-  level: 7
+```jsonc
+{
+  "logging": {
+    "enabled": true,
+    "structured": false,
+    "destination": "file",
+    "path": "hse.log",
+    "level": 7
+  }
+}
 ```
 
 Logging can be turned on or off, but can only be _either_ structured or not. HSE
 will support 4 destinations for those logs. Log levels will mirror those from
 `man syslog`. Setting path when destination is not file will be ignored.
 
-A global variable will be added for use internally for logging that is dependent
-on being structured. The variable will be set only once at `hse_init()` time.
+##### UNIX Socket
 
-```c
-// hse_util/logging.h
-bool logging_is_stuctured = false;
+For each KVDB within a process, there will be a UNIX socket for interacting with
+that KVDB.
+
+Schema:
+
+```jsonc
+{
+  "kvdb": {
+    "socket": {
+      "path": "string"
+    }
+  }
+}
 ```
 
-#### UNIX Socket
+Default Configuration:
 
-In order to fully support the Linux File System Hierarchy, we need to allow all
-artifacts created by HSE to have configurable paths. Earlier we tackled the log
-configuration. The UNIX socket will be shared amongst KVDBs within a given
-process.
-
-##### Schema
-
-```yaml
-socket:
-  path: string
-```
-
-##### Default Configuration
-
-```yaml
-socket:
-  path: HSE_ROOT/hse.sock
+```jsonc
+{
+  "kvdb": {
+    "socket": {
+      "path": "hse.sock"
+    }
+  }
+}
 ```
 
 #### New Macros for Configuration Keys
@@ -184,127 +197,34 @@ user experience.
 
 ```c
 // hse/hse.h
-#define HSE_CONF_LOGGING_ENABLED "logging.enabled"
-#define HSE_CONF_KVDB_READ_ONLY "read_only"
-#define HSE_CONF_KVDB_DUR_CAPACITY "dur_capacity"
-#define HSE_CONF_KVS_CP_FANOUT "cp_fanout"
-#define HSE_CONF_KVS_CN_MAINT_DELAY "cn_main_delay"
+#define HSE_CONFIG_LOGGING_ENABLED "logging.enabled"
+#define HSE_CONFIG_KVDB_READ_ONLY "read_only"
+#define HSE_CONFIG_KVDB_DUR_CAPACITY "dur_capacity"
+#define HSE_CONFIG_KVS_CP_FANOUT "cp_fanout"
+#define HSE_CONFIG_KVS_CN_MAINT_DELAY "cn_maint_delay"
 ```
 
-#### Initializing HSE
+#### `hse_config`
 
-- `hse_init()`
+`hse_config` will replace `hse_params` in order to conform to "config string"
+nomenclature. `hse_config` will be useful in order to avoid having to re-parse a
+config string multiple times.
+
+##### APIs
 
 ```c
 hse_err_t
-hse_init(const char *path_to_root, ...) __attribute__(sentinel));
-```
+hse_params_create(struct hse_config **conf);
 
-Usage:
-
-```c
-hse_init("/var/lib/mysql/", HSE_CONF_LOGGING_ENABLED, "true", NULL);
-```
-
-- `hse_initv()`[^1]
-
-```c
 hse_err_t
-hse_initv(const char *path_to_root, size_t nelem, const char *keys, const char *values);
-```
+hse_config_from_string(struct hse_config *conf, const char *config_string);
 
-Usage:
-
-```c
-const char *keys[] = { HSE_CONF_LOGGING_ENABLED };
-const char *values[] = { "true" };
-assert(sizeof(keys) == sizeof(values));
-hse_initv(NULL, N_ELEMS(keys), keys, values);
-```
-
-#### Making a KVDB
-
-- `hse_kvdb_make()`
-
-```c
 hse_err_t
-hse_kvdb_make(const char *name, const char *path_to_root, ...) __attribute__((sentinel));
-```
+hse_config_set(struct hse_config *conf, const char *key, const char *value);
 
-Usage:
-
-```c
-hse_kvdb_make("kvdb1", NULL, HSE_CONF_KVDB_DUR_CAPACITY, "5", NULL);
-```
-
-- `hse_kvdb_makev()`
-
-```c
 hse_err_t
-hse_kvdb_makev(const char *name, const char *path_to_root, size_t nelem, const char **keys, const char **values);
+hse_config_get(struct hse_config *conf, const char *key);
 ```
-
-Usage:
-
-```c
-const char *keys[] = { HSE_CONF_KVDB_DUR_CAPACITY };
-const char *values[] = { "5" };
-assert(sizeof(keys) == sizeof(values));
-hse_kvdb_makev("kvdb1", NULL, N_ELEMS(keys), keys, values);
-```
-
-#### Making a KVS
-
-- `hse_kvdb_kvs_make()`
-
-Similar to `hse_kvdb_make()`.
-
-- `hse_kvdb_kvs_makev()`
-
-Similar to `hse_kvdb_makev()`.
-
-#### Opening a KVDB
-
-- `hse_kvdb_open()`
-
-```c
-hse_kvdb_open(const char *name, const char *path_to_root, ...) __attribute__((sentinel));
-```
-
-Usage:
-
-```c
-hse_kvdb_open("kvdb1", NULL, HSE_KVDB_READ_ONLY, "true", NULL);
-```
-
-- `hse_kvdb_openv()`
-
-```c
-hse_kvdb_openv(const char *name, const char *path_to_root, size_t nelem, const char **keys, const char **values);
-```
-
-Usage:
-
-```c
-const char *keys[] = { HSE_KVDB_READ_ONLY };
-const char *values[] = { "true" };
-assert(sizeof(keys) == sizeof(values));
-hse_kvdb_openv(NULL, N_ELEMS(keys), keys, values);
-```
-
-#### Opening a KVS
-
-- `hse_kvdb_kvs_open()`
-
-Similar to `hse_kvdb_open()`.
-
-- `hse_kvdb_kvs_openv()`
-
-Similar to `hse_kvdb_openv()`.
-
----
-
-The new APIs above will deprecate `hse_params`, and it will be removed.
 
 ## Failure and Recovery Handling
 
@@ -327,7 +247,10 @@ configuration.
   - If we were consistent with databases, the terminology would be create/drop
   - Move to create/destroy? Seem to be using destroy a lot with the discussion
     around libmpool
-
-[^1]:
-    The `*v()` APIs will be used by the bindings as variadic arg functions are
-    much harder to model.
+- Leaving room for a potential `HSE_CONFIG` environment variable in the future
+  whose value would be a JSON string.
+- Logs on a per-kvdb basis instead of an entire subsystem basis?
+- Could we make it so that `hse_config`-related code was not initialized during
+  `hse_init()`, but was instead purely static? `hse_init()` would then take an
+  `hse_config` object. If we could pull that off, logging could begin much
+  earlier in the HSE lifecycle.
