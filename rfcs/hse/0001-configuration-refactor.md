@@ -277,6 +277,19 @@ hse_err_t
 hse_config_get(struct hse_config *conf, const char *key);
 ```
 
+These APIs should be thought of as building a config string programmatically.
+When using `hse_config_set()`, a user should provide the full key for
+configuring an option. For instance, if I want to configure `cn_maint_delay` of
+`kvs1` within `kvdb1`, I would call `hse_config_set()` like so:
+
+```c
+hse_config_set(conf, "kvdb.kvdb1.kvs.kvs1.cn_maint_delay", "50");
+```
+
+The key is what you would use when querying JSON with
+[`jq`](https://stedolan.github.io/jq/). This syntax is generally well understood
+amongst JSON users.
+
 ## Failure and Recovery Handling
 
 In the case of a configuration doesn't meet constraints or is incorrect, a
