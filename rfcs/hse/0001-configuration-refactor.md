@@ -9,8 +9,8 @@ and open to advanced configuration by end-users.
 ## Requirements
 
 - HSE should be usable with sane defaults
-- Support more that one KVDB open at any time in the future without breaking
-  current configuration
+- Support more than one KVDB per process open at any time in the future without
+  breaking current configuration
 - Remove configuration files
 - Remove notion of workload profiles
 - Allow configuration only at call-site with opportunity for extension that can
