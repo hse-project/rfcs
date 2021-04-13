@@ -51,7 +51,7 @@ HSE exists to be embedded into applications. Applications need to be the primary
 force when it comes to how HSE should be configured while leaving avenues for
 end users to have a say. The best way to do this is for application developers
 to expose HSE configuration options at the application level. In MongoDB's case,
-HSE options that MongoDB wants to expose would belong in the `mongodb.conf` file
+HSE options that MongoDB wants to expose would belong in the `mongod.conf` file
 right next to general MongoDB options. MongoDB will only want to expose stable
 configuration options however. For experimental configuration options, we can
 use a raw configuration string.
@@ -137,7 +137,7 @@ Schema:
     "kvdb1": {
       "storage": {
         "staging": {
-          "path": "string"
+          "path": "" // staging won't be configured by default
         },
         "capacity": {
           "path": "string"
