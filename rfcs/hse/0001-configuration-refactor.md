@@ -37,41 +37,13 @@ added/updates will also be updated.
 Current defaults will stay the same and any path-based configuration like
 locations of artifacts will use the current working directory. Within the
 current working directory, each KVDB within a process will produce a directory
-for all of its artifacts, and it will be named with the name of the KVDB.
+for all of its artifacts, and it will be named with the name of the KVDB. The
+location where a KVDB will store all its artifacts will be referred to as a
+"KVDB Home".
 
 ```shell
 $PWD/kvdb1
 ```
-
-##### Locations of KVDB Artifacts
-
-KVDB artifacts can be defined as objects a KVDB create within the file system.
-Those would include the following:
-
-- the sock file
-- any data files
-
-These artifacts by default will go in `$PWD/$kvdb_name`.
-
-```shell
-$ tree kvdb1
-kvdb1
-├── hse.sock # or kvdb.sock?
-├── staging/
-└── capacity/
-```
-
-The socket file by default will be named `hse.sock`, but the path will be
-configurable. The media class directory paths will each be individually
-configurable as well.
-
-##### Location of Log File
-
-All KVDBs within a process will share a single log location. By default, that
-location will be the current working directory in a file called `hse.log`. The
-path for the log file will also be configurable. All log messages will be
-accompanied by the name of the KVDB that they pertain to as to make it easy to
-grep for messages pertaining to each KVDB.
 
 #### HSE Config at the Application Level
 
@@ -125,6 +97,36 @@ within the `kvs` keyword. KVS-specific parameters will override any listed under
 }
 ```
 
+##### KVDB Home Directory
+
+In the case, a user wants to keep all of a KVDB's artifacts together, a `home`
+has been provided. Per-artifact overrides as described below will take
+precedence over `home`.
+
+Schema:
+
+```jsonc
+{
+  "kvdb": {
+    "kvdb1": {
+      "home": "string"
+    }
+  }
+}
+```
+
+Default Configuration:
+
+```jsonc
+{
+  "kvdb": {
+    "kvdb1": {
+      "home": "$PWD/kvdb1"
+    }
+  }
+}
+```
+
 ##### Media Class Storage
 
 Schema:
@@ -166,6 +168,12 @@ Default Configuration:
 ```
 
 ##### Logging
+
+All KVDBs within a process will share a single log location. By default, that
+location will be the current working directory in a file called `hse.log`. The
+path for the log file will also be configurable. All log messages will be
+accompanied by the name of the KVDB that they pertain to as to make it easy to
+grep for messages pertaining to each KVDB.
 
 Schema:
 
@@ -209,8 +217,10 @@ Schema:
 ```jsonc
 {
   "kvdb": {
-    "socket": {
-      "path": "string"
+    "kvdb1": {
+      "socket": {
+        "path": "string"
+      }
     }
   }
 }
@@ -221,8 +231,10 @@ Default Configuration:
 ```jsonc
 {
   "kvdb": {
-    "socket": {
-      "path": "hse.sock"
+    "kvdb1": {
+      "socket": {
+        "path": "hse.sock"
+      }
     }
   }
 }
@@ -253,7 +265,7 @@ config string multiple times.
 
 ```c
 hse_err_t
-hse_params_create(struct hse_config **conf);
+hse_config_create(struct hse_config **conf);
 
 hse_err_t
 hse_config_from_string(struct hse_config *conf, const char *config_string);
