@@ -15,6 +15,7 @@ and open to advanced configuration by end-users.
 - Remove notion of workload profiles
 - Allow configuration only at call-site with opportunity for extension that can
   be exposed by application developers to end users
+- Allow HSE logs and KVDB logs to go to the same location
 
 ## Non-Requirements
 
@@ -35,15 +36,12 @@ added/updates will also be updated.
 #### Sane Defaults
 
 Current defaults will stay the same and any path-based configuration like
-locations of artifacts will use the current working directory. Within the
-current working directory, each KVDB within a process will produce a directory
-for all of its artifacts, and it will be named with the name of the KVDB. The
-location where a KVDB will store all its artifacts will be referred to as a
-"KVDB Home".
+locations of artifacts will use the current working directory. The location
+where a KVDB will store all its artifacts will be referred to as a "KVDB Home".
 
-```shell
-$PWD/kvdb1
-```
+If a process opens two KVDBs concurrently without changing the KVDB home for
+either, the second open should error out appropriately because there is already
+a KVDB using the default current working directory as its home.
 
 #### HSE Config at the Application Level
 
@@ -62,34 +60,88 @@ configuration string. MongoDB should in theory do the same thing with HSE.
 Advanced end users could then use experimental configuration options to tune HSE
 to their liking.
 
+##### `hse_config`
+
+`hse_config` will replace `hse_params` in order to conform to "config string"
+nomenclature. `hse_config` will be useful in order to avoid having to re-parse a
+config string multiple times. Like config strings, `hse_config` objects should
+also be KVDB-scoped. Use one `hse_config` object per KVDB and its KVS.
+
+###### APIs
+
+```c
+hse_err_t
+hse_config_create(struct hse_config **conf);
+
+hse_err_t
+hse_config_from_string(struct hse_config *conf, const char *config_string);
+
+hse_err_t
+hse_config_set(struct hse_config *conf, const char *key, const char *value);
+
+bool
+hse_config_get(struct hse_config *conf,  char *vbuf, size_t vbuf_sz, size_t *value_len);
+```
+
+These APIs should be thought of as building a config string programmatically.
+When using `hse_config_set()`, a user should provide the full key for
+configuring an option. For instance, if I want to configure `cn_maint_delay` of
+`kvs1` within the KVDB, I would call `hse_config_set()` like so:
+
+```c
+hse_config_set(conf, "kvdb.kvs.kvs1.open.cn_maint_delay", "50");
+```
+
+The key is what you would use when querying JSON with
+[`jq`](https://stedolan.github.io/jq/). This syntax is generally well understood
+amongst JSON users.
+
 ##### Config String Format
 
 The config string will be a JSON-formatted string. We already have a dependency
 on cJSON so this should not be anything new. The config string format should
 feel pretty similar to our previous config file format.
 
-All KVDB parameters will be located under the `kvdb` keyword and under the name
-of the KVDB. KVS parameters will be located under the `kvs` key, which is
-located under the `kvdb` key. The `default` keyword under `kvs` will be reserved
-for parameters which apply to all KVSs. The outcome of this is that no KVS can
-be named `default`. KVS-specific parameters will exist under the name of KVS
-within the `kvs` keyword. KVS-specific parameters will override any listed under
-`default`.
+All KVDB parameters will be located under the `kvdb` keyword. KVS parameters
+will be located under the `kvs` key, which is located under the `kvdb` key. The
+`default` keyword under `kvs` will be reserved for parameters which apply to all
+KVSs. The outcome of this is that no KVS can be named `default`. KVS-specific
+parameters will exist under the name of the KVS within the `kvs` keyword.
+KVS-specific parameters will override any listed under `default`.
+
+Config strings will be KVDB-scoped, meaning an application should expose one
+config string option per KVDB if it sees fit.
 
 ```jsonc
 {
+  "logging": {
+    // later in document
+  },
   "kvdb": {
     "logging": {
       // Later in document
     },
-    "kvdb1": {
-      "my_kvdb_param": true,
-      "kvs": {
-        "default": {
-          "my_kvs_param": 1
+    "open": {
+      "my_kvdb_open_param": true
+    },
+    "create": {
+      "my_kvdb_create_param": false
+    },
+    "kvs": {
+      "default": {
+        "open": {
+          "my_kvs_open_param": 1
         },
-        "kvs1": {
-          "my_kvs_param": 1
+        "create": {
+          "my_kvs_create_params": "hello"
+        }
+      },
+      "kvs1": {
+        "open": {
+          "my_kvs_open_param": 2
+        },
+        "create": {
+          "my_kvs_create_param": "goodbye"
         }
       }
     }
@@ -108,9 +160,7 @@ Schema:
 ```jsonc
 {
   "kvdb": {
-    "kvdb1": {
-      "home": "string"
-    }
+    "home": "string"
   }
 }
 ```
@@ -120,9 +170,7 @@ Default Configuration:
 ```jsonc
 {
   "kvdb": {
-    "kvdb1": {
-      "home": "$PWD/kvdb1"
-    }
+    "home": "$PWD"
   }
 }
 ```
@@ -134,14 +182,12 @@ Schema:
 ```jsonc
 {
   "kvdb": {
-    "kvdb1": {
-      "storage": {
-        "staging": {
-          "path": "" // staging won't be configured by default
-        },
-        "capacity": {
-          "path": "string"
-        }
+    "storage": {
+      "staging": {
+        "path": "" // staging won't be configured by default
+      },
+      "capacity": {
+        "path": "string"
       }
     }
   }
@@ -153,14 +199,12 @@ Default Configuration:
 ```jsonc
 {
   "kvdb": {
-    "kvdb1": {
-      "storage": {
-        "staging": {
-          "path": "$PWD/kvdb1/staging"
-        },
-        "capacity": {
-          "path": "$PWD/kvdb1/capacity"
-        }
+    "storage": {
+      "staging": {
+        "path": "$PWD/staging"
+      },
+      "capacity": {
+        "path": "$PWD/capacity"
       }
     }
   }
@@ -170,23 +214,35 @@ Default Configuration:
 ##### Logging
 
 All KVDBs within a process will log to individual files. By default, that
-location for each KVDB will be the `$KVDB_HOME/$kvdb_name/hse.log`. The path for
-the log file will also be configurable.
+location for each KVDB will be the `$KVDB_HOME/kvdb.log`. The path for the log
+file will also be configurable.
+
+Outside of KVDBs (after `hse_init()`, before `hse_kvdb_open()`) HSE needs to a
+place to log messages to. In the past, that has been `stderr`. HSE needs to stop
+logging messages to `stderr`/`stdout` by default while also allowing locations
+of these messages to be configurable. `hse_init()` will therefore need to take
+an `hse_config` object. `hse_init()` will look at the root-level `logging` key,
+which will have the same schema as `kvdb.logging`, but will use `hse.log` as the
+default filename.
+
+```c
+hse_err_t
+hse_init(struct hse_config *conf);
+```
+
+HSE should support `logging.path` and `kvdb.logging.path` pointing to the same
+file/destination if that is how the user chose to configure their setup.
 
 Schema:
 
 ```jsonc
 {
-  "kvdb": {
-    "kvdb1": {
-      "logging": {
-        "enabled": "boolean",
-        "structured": "boolean",
-        "destination": "file | syslog | stdout | stderr",
-        "path": "when destination == file",
-        "level": "[0 - 7]" // support string style as well?
-      }
-    }
+  "logging": {
+    "enabled": "boolean",
+    "structured": "boolean",
+    "destination": "file | syslog | stdout | stderr",
+    "path": "when destination == file",
+    "level": "[0 - 7]" // support string style as well?
   }
 }
 ```
@@ -195,16 +251,12 @@ Default Configuration:
 
 ```jsonc
 {
-  "kvdb": {
-    "kvdb1": {
-      "logging": {
-        "enabled": true,
-        "structured": false,
-        "destination": "file",
-        "path": "$PWD/kvdb1/hse.log",
-        "level": 7
-      }
-    }
+  "logging": {
+    "enabled": true,
+    "structured": false,
+    "destination": "file",
+    "path": "$PWD/kvdb.log && $PWD/hse.log",
+    "level": 7
   }
 }
 ```
@@ -223,10 +275,8 @@ Schema:
 ```jsonc
 {
   "kvdb": {
-    "kvdb1": {
-      "socket": {
-        "path": "string"
-      }
+    "socket": {
+      "path": "string"
     }
   }
 }
@@ -237,10 +287,8 @@ Default Configuration:
 ```jsonc
 {
   "kvdb": {
-    "kvdb1": {
-      "socket": {
-        "path": "hse.sock"
-      }
+    "socket": {
+      "path": "kvdb.sock"
     }
   }
 }
@@ -260,41 +308,6 @@ user experience.
 #define HSE_CONFIG_KVS_CP_FANOUT "cp_fanout"
 #define HSE_CONFIG_KVS_CN_MAINT_DELAY "cn_maint_delay"
 ```
-
-#### `hse_config`
-
-`hse_config` will replace `hse_params` in order to conform to "config string"
-nomenclature. `hse_config` will be useful in order to avoid having to re-parse a
-config string multiple times.
-
-##### APIs
-
-```c
-hse_err_t
-hse_config_create(struct hse_config **conf);
-
-hse_err_t
-hse_config_from_string(struct hse_config *conf, const char *config_string);
-
-hse_err_t
-hse_config_set(struct hse_config *conf, const char *key, const char *value);
-
-bool
-hse_config_get(struct hse_config *conf,  char *vbuf, size_t vbuf_sz, size_t *value_len);
-```
-
-These APIs should be thought of as building a config string programmatically.
-When using `hse_config_set()`, a user should provide the full key for
-configuring an option. For instance, if I want to configure `cn_maint_delay` of
-`kvs1` within `kvdb1`, I would call `hse_config_set()` like so:
-
-```c
-hse_config_set(conf, "kvdb.kvdb1.kvs.kvs1.cn_maint_delay", "50");
-```
-
-The key is what you would use when querying JSON with
-[`jq`](https://stedolan.github.io/jq/). This syntax is generally well understood
-amongst JSON users.
 
 ## Failure and Recovery Handling
 
