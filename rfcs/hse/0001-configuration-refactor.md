@@ -13,8 +13,7 @@ and open to advanced configuration by end-users.
   breaking current configuration
 - Remove configuration files
 - Remove notion of workload profiles
-- Allow configuration only at call-site with opportunity for extension that can
-  be exposed by application developers to end users
+- Introduce notion of KVDB home for some use cases
 - Allow HSE logs and KVDB logs to go to the same location
 
 ## Non-Requirements
