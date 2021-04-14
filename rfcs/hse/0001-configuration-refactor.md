@@ -279,8 +279,8 @@ hse_config_from_string(struct hse_config *conf, const char *config_string);
 hse_err_t
 hse_config_set(struct hse_config *conf, const char *key, const char *value);
 
-hse_err_t
-hse_config_get(struct hse_config *conf, const char *key);
+bool
+hse_config_get(struct hse_config *conf,  char *vbuf, size_t vbuf_sz, size_t *value_len);
 ```
 
 These APIs should be thought of as building a config string programmatically.
