@@ -70,8 +70,7 @@ to discuss why certain comments were made.
 Once all comments have been resolved and discussion has reached a point of
 consensus, the author will mark the corresponding issue in this repository as
 ready for a final comment period. This final comment period signifies to others
-that a decision will be made about the RFC soon (TODO: should this be a hard
-length of time?).
+that a decision will be made about the RFC within 7 business days.
 
 After any potential discussion has been resolved in the final comment period,
 the maintainers of the project will decide on whether or not to accept the RFC.
