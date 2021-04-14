@@ -78,10 +78,10 @@ within the `kvs` keyword. KVS-specific parameters will override any listed under
 
 ```jsonc
 {
-  "logging": {
-    // Later in document
-  },
   "kvdb": {
+    "logging": {
+      // Later in document
+    },
     "kvdb1": {
       "my_kvdb_param": true,
       "kvs": {
@@ -169,22 +169,24 @@ Default Configuration:
 
 ##### Logging
 
-All KVDBs within a process will share a single log location. By default, that
-location will be the current working directory in a file called `hse.log`. The
-path for the log file will also be configurable. All log messages will be
-accompanied by the name of the KVDB that they pertain to as to make it easy to
-grep for messages pertaining to each KVDB.
+All KVDBs within a process will log to individual files. By default, that
+location for each KVDB will be the `$KVDB_HOME/$kvdb_name/hse.log`. The path for
+the log file will also be configurable.
 
 Schema:
 
 ```jsonc
 {
-  "logging": {
-    "enabled": "boolean",
-    "structured": "boolean",
-    "destination": "file | syslog | stdout | stderr",
-    "path": "when destination == file",
-    "level": "[0 - 7]" // support string style as well?
+  "kvdb": {
+    "kvdb1": {
+      "logging": {
+        "enabled": "boolean",
+        "structured": "boolean",
+        "destination": "file | syslog | stdout | stderr",
+        "path": "when destination == file",
+        "level": "[0 - 7]" // support string style as well?
+      }
+    }
   }
 }
 ```
@@ -193,12 +195,16 @@ Default Configuration:
 
 ```jsonc
 {
-  "logging": {
-    "enabled": true,
-    "structured": false,
-    "destination": "file",
-    "path": "hse.log",
-    "level": 7
+  "kvdb": {
+    "kvdb1": {
+      "logging": {
+        "enabled": true,
+        "structured": false,
+        "destination": "file",
+        "path": "$PWD/kvdb1/hse.log",
+        "level": 7
+      }
+    }
   }
 }
 ```
