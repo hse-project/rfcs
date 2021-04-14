@@ -81,6 +81,9 @@ hse_config_set(struct hse_config *conf, const char *key, const char *value);
 
 bool
 hse_config_get(struct hse_config *conf,  char *vbuf, size_t vbuf_sz, size_t *value_len);
+
+bool
+hse_config_validate(struct hse_config *conf);
 ```
 
 These APIs should be thought of as building a config string programmatically.
