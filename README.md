@@ -1,6 +1,6 @@
 # HSE RFCs
 
-This repo tracks RFCs (request for comment) for all projects under
+This repo tracks RFCs (request for comments) for all projects under
 [`hse-project`](https://github.com/hse-project).
 
 ## Purpose
@@ -18,9 +18,10 @@ When determining whether you should submit an RFC, use the following criteria:
 - Any backwards-incompatible change including breaks of either the API or the
   ABI
 - Additions to the API
-- Major or significant internal change which would significantly and negatively
-  impact performance characteristics including throughput, latency,
-  read/write-amplification, and memory (DRAM) consumption
+- Major or significant internal changes
+- Changes which would significantly and negatively impact performance
+  characteristics including throughput, latency, read/write-amplification, and
+  memory (DRAM) consumption
 - Changes to the RFC process
 
 The following cases most likely do not require an RFC:
@@ -40,9 +41,9 @@ accepted, it is important to take your time. Evaluate whether the topic of your
 RFC has been proposed before and been previously rejected. It is also important
 to solicit maintainer feedback early on in your ideation process. Open a
 [discussion](https://github.com/hse-project/hse/discussions) on the main
-[HSE repository](https://github.com/hse-project/hse) about your idea, and
-maintainers can give their opinion on whether or not your RFC is aligned to the
-goals of the project and likely to be accepted.
+[HSE repository](https://github.com/hse-project/hse) about your idea with the
+"ideas" tag set, and maintainers can give their opinion on whether or not your
+RFC is aligned to the goals of the project and likely to be accepted.
 
 ## RFC Process
 
