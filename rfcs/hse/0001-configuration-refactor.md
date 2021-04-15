@@ -91,7 +91,7 @@ configuring an option. For instance, if I want to configure `cn_maint_delay` of
 `kvs1` within the KVDB, I would call `hse_config_set()` like so:
 
 ```c
-hse_config_set(conf, "kvdb.kvs.kvs1.open.cn_maint_delay", "50");
+hse_config_set(conf, "kvdb.kvs.kvs1.cn_maint_delay", "50");
 ```
 
 The key is what you would use when querying JSON with
@@ -123,28 +123,13 @@ config string option per KVDB if it sees fit.
     "logging": {
       // Later in document
     },
-    "open": {
-      "my_kvdb_open_param": true
-    },
-    "create": {
-      "my_kvdb_create_param": false
-    },
+    "my_kvdb_param": true,
     "kvs": {
       "default": {
-        "open": {
-          "my_kvs_open_param": 1
-        },
-        "create": {
-          "my_kvs_create_params": "hello"
-        }
+        "my_kvs_param": 1
       },
       "kvs1": {
-        "open": {
-          "my_kvs_open_param": 2
-        },
-        "create": {
-          "my_kvs_create_param": "goodbye"
-        }
+        "my_kvs_open_param": 2
       }
     }
   }
