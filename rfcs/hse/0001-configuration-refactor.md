@@ -231,7 +231,7 @@ Schema:
 }
 ```
 
-Default Configuration: TODO
+Default Configuration:
 
 ```jsonc
 {
@@ -239,7 +239,7 @@ Default Configuration: TODO
     "enabled": true,
     "structured": false,
     "destination": "file",
-    "path": "$PWD/hse.log", // both logging.path and kvdb.logging.path will point to the same log file by default
+    "path": "$PWD/hse.log in the case of HSE logging and ${kvdb.home}/hse.log in the case of KVDB logging", // both logging.path and kvdb.logging.path will point to the same log file by default
     "level": 7
   }
 }
