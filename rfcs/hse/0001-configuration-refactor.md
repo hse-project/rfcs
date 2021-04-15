@@ -66,9 +66,9 @@ passed to APIs, that will become a `const char *config`. In order to better
 support application developers, HSE will gain two new APIs.
 
 ```c
-/* hse_config_merge() will allow application developers to the config strings
- * that they have configured, and merge a user's given config string with
- * theirs. This function will assume both configs are valid.
+/* hse_config_merge() will allow application developers to pass the config
+ * strings that they have configured, and merge a user's given config string
+ * with theirs. This function will assume both configs are valid.
  *
  * Ex:
  *
@@ -205,7 +205,7 @@ Default Configuration:
 
 ##### Logging
 
-Outside of KVDBs (after `hse_init()`, before `hse_kvdb_open()`) HSE needs to a
+Outside of KVDBs (after `hse_init()`, before `hse_kvdb_open()`) HSE needs a
 place to log messages to. In the past, that has been `stderr`. HSE needs to stop
 logging messages to `stderr`/`stdout` by default while also allowing locations
 of these messages to be configurable. `hse_init()` will therefore need to take a
