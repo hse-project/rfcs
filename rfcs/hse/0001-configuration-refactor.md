@@ -99,6 +99,9 @@ hse_config_valid(const char *config, char *buf, size_t buf_len);
 `hse_config_valid()` will be used by the CLI to validate config strings through
 a new `hse config validate` subcommand in the future as well.
 
+The same CLI for setting config options of `key=value` will continue to work,
+but implemented outside of `libhse`.
+
 ##### Config String Format
 
 The config string will be a JSON-formatted string. We already have a dependency
