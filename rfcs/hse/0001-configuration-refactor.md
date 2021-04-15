@@ -59,44 +59,45 @@ configuration string. MongoDB should in theory do the same thing with HSE.
 Advanced end users could then use experimental configuration options to tune HSE
 to their liking.
 
-##### `hse_config`
+##### API Changes
 
-`hse_config` will replace `hse_params` in order to conform to "config string"
-nomenclature. `hse_config` will be useful in order to avoid having to re-parse a
-config string multiple times. Like config strings, `hse_config` objects should
-also be KVDB-scoped. Use one `hse_config` object per KVDB and its KVS.
-
-###### APIs
+HSE will lose any notion of `hse_params`. Where `struct hse_params` is being
+passed to APIs, that will become a `const char *config`. In order to better
+support application developers, HSE will gain two new APIs.
 
 ```c
+/* hse_config_merge() will allow application developers to the config strings
+ * that they have configured, and merge a user's given config string with
+ * theirs. This function will assume both configs are valid.
+ *
+ * Ex:
+ *
+ * char *merged_config;
+ * err = hse_config_merge(my_config, user_config, &merged_config);
+ * assert(err == 0);
+ */
 hse_err_t
-hse_config_create(struct hse_config **conf);
+hse_config_merge(const char *current, const char *incoming, char **merged);
 
-hse_err_t
-hse_config_from_string(struct hse_config *conf, const char *config_string);
-
-hse_err_t
-hse_config_set(struct hse_config *conf, const char *key, const char *value);
-
+/* hse_config_valid() will take a config string and say whether or not the user
+ * has configured a valid string. It returns a boolean. If a non-NULL buf is
+ * passed, HSE will fill the buf with useful messages for helping debug the
+ * config. Each message will be newline separated until the buf is full. HSE
+ * will NUL-terminate the buffer.
+ *
+ * Ex:
+ *
+ * char buf[1024];
+ * if (!hse_config_valid(my_config, buf, sizeof(buf))) {
+ *   fprintf(stderr, "Invalid HSE config string:\n\n%s", buf);
+ * }
+ */
 bool
-hse_config_get(struct hse_config *conf, const char *key, char *vbuf, size_t vbuf_sz, size_t *value_len);
-
-bool
-hse_config_validate(struct hse_config *conf);
+hse_config_valid(const char *config, char *buf, size_t buf_len);
 ```
 
-These APIs should be thought of as building a config string programmatically.
-When using `hse_config_set()`, a user should provide the full key for
-configuring an option. For instance, if I want to configure `cn_maint_delay` of
-`kvs1` within the KVDB, I would call `hse_config_set()` like so:
-
-```c
-hse_config_set(conf, "kvdb.kvs.kvs1.cn_maint_delay", "50");
-```
-
-The key is what you would use when querying JSON with
-[`jq`](https://stedolan.github.io/jq/). This syntax is generally well understood
-amongst JSON users.
+`hse_config_valid()` will be used by the CLI to validate config strings through
+a new `hse config validate` subcommand in the future as well.
 
 ##### Config String Format
 
@@ -204,13 +205,13 @@ Default Configuration:
 Outside of KVDBs (after `hse_init()`, before `hse_kvdb_open()`) HSE needs to a
 place to log messages to. In the past, that has been `stderr`. HSE needs to stop
 logging messages to `stderr`/`stdout` by default while also allowing locations
-of these messages to be configurable. `hse_init()` will therefore need to take
-an `hse_config` object. `hse_init()` will look at the root-level `logging` key,
-which will have the same schema as `kvdb.logging`.
+of these messages to be configurable. `hse_init()` will therefore need to take a
+config string. `hse_init()` will look at the root-level `logging` key, which
+will have the same schema as `kvdb.logging`.
 
 ```c
 hse_err_t
-hse_init(struct hse_config *conf);
+hse_init(const char *config);
 ```
 
 HSE should support `logging.path` and `kvdb.logging.path` pointing to the same
@@ -276,21 +277,6 @@ Default Configuration:
     }
   }
 }
-```
-
-#### New Macros for Configuration Keys
-
-In order to better support code completion technologies with the new APIs for
-making/opening a KVDB, macros will be defined to string constants for a better
-user experience.
-
-```c
-// hse/hse.h
-#define HSE_CONFIG_LOGGING_ENABLED "logging.enabled"
-#define HSE_CONFIG_KVDB_READ_ONLY "read_only"
-#define HSE_CONFIG_KVDB_DUR_CAPACITY "dur_capacity"
-#define HSE_CONFIG_KVS_CP_FANOUT "cp_fanout"
-#define HSE_CONFIG_KVS_CN_MAINT_DELAY "cn_maint_delay"
 ```
 
 ## Failure and Recovery Handling
