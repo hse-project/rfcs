@@ -332,13 +332,3 @@ configuration.
   - If we were consistent with databases, the terminology would be create/drop
   - Move to create/destroy? Seem to be using destroy a lot with the discussion
     around libmpool
-- Leaving room for a potential `HSE_CONFIG` environment variable in the future
-  whose value would be a JSON string.
-- Logs on a per-kvdb basis instead of an entire subsystem basis?
-- Could we make it so that `hse_config`-related code was not initialized during
-  `hse_init()`, but was instead purely static? `hse_init()` would then take an
-  `hse_config` object. If we could pull that off, logging could begin much
-  earlier in the HSE lifecycle.
-- Tom made a mention of RockDB's logging API:
-  https://github.com/facebook/rocksdb/wiki/Logger
-  - Is it worth doing something similar?
