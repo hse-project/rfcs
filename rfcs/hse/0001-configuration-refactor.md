@@ -216,17 +216,12 @@ Default Configuration:
 
 ##### Logging
 
-All KVDBs within a process will log to individual files. By default, that
-location for each KVDB will be the `$KVDB_HOME/kvdb.log`. The path for the log
-file will also be configurable.
-
 Outside of KVDBs (after `hse_init()`, before `hse_kvdb_open()`) HSE needs to a
 place to log messages to. In the past, that has been `stderr`. HSE needs to stop
 logging messages to `stderr`/`stdout` by default while also allowing locations
 of these messages to be configurable. `hse_init()` will therefore need to take
 an `hse_config` object. `hse_init()` will look at the root-level `logging` key,
-which will have the same schema as `kvdb.logging`, but will use `hse.log` as the
-default filename.
+which will have the same schema as `kvdb.logging`.
 
 ```c
 hse_err_t
@@ -234,7 +229,8 @@ hse_init(struct hse_config *conf);
 ```
 
 HSE should support `logging.path` and `kvdb.logging.path` pointing to the same
-file/destination if that is how the user chose to configure their setup.
+file/destination if that is how the user chose to configure their setup. This
+will be the default setup.
 
 Schema:
 
@@ -258,7 +254,7 @@ Default Configuration:
     "enabled": true,
     "structured": false,
     "destination": "file",
-    "path": "$PWD/kvdb.log && $PWD/hse.log",
+    "path": "$PWD/hse.log", // both logging.path and kvdb.logging.path will point to the same log file by default
     "level": 7
   }
 }
