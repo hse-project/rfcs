@@ -203,10 +203,10 @@ Default Configuration:
   "kvdb": {
     "storage": {
       "staging": {
-        "path": "$PWD/staging"
+        "path": ""
       },
       "capacity": {
-        "path": "$PWD/capacity"
+        "path": "$PWD"
       }
     }
   }
