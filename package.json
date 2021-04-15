@@ -1,0 +1,14 @@
+{
+  "name": "rfcs",
+  "description": "HSE Project RFCs",
+  "repository": "ssh://git@bitbucket.micron.com/hse/rfcs.git",
+  "license": "Apache-2.0",
+  "private": true,
+  "scripts": {
+    "format": "prettier --config .prettierrc.yml --write '**/*.md'",
+    "format:ci": "prettier --config .prettierrc.yml --check '**/*.md'"
+  },
+  "devDependencies": {
+    "prettier": "^2.2.1"
+  }
+}
