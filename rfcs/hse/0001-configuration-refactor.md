@@ -155,7 +155,8 @@ config string option per KVDB if it sees fit.
 
 In the common case where a user wants to keep all of a KVDB's artifacts
 together, a `home` has been provided. Per-artifact overrides as described below
-will take precedence over `home`.
+will take precedence over `home`. In order to make sure home directories are
+exclusive, a PID file will be created called `kvdb.pid`.
 
 Schema:
 
