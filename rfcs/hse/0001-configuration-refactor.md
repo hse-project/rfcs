@@ -173,7 +173,7 @@ Default Configuration:
 ```jsonc
 {
   "kvdb": {
-    "home": "$PWD"
+    "home": "$CWD"
   }
 }
 ```
@@ -207,7 +207,7 @@ Default Configuration:
         "path": ""
       },
       "capacity": {
-        "path": "$PWD"
+        "path": "${kvdb.home}/capacity"
       }
     }
   }
@@ -246,7 +246,7 @@ Schema:
 }
 ```
 
-Default Configuration:
+Default Configuration: TODO
 
 ```jsonc
 {
@@ -287,7 +287,7 @@ Default Configuration:
 {
   "kvdb": {
     "socket": {
-      "path": "kvdb.sock"
+      "path": "${kvdb.home}/kvdb.sock"
     }
   }
 }
