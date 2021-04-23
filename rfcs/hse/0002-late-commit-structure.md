@@ -10,12 +10,12 @@ Since cN kvsets are searched in order from newest to oldest, this
 invariant allows cN queries to terminate on the first kvset with a
 suitable match.
 
-Recent changes in c0 allow transactions to store uncommitted kv-tuples in the
-active c0kvms (strut c0_kvmultiset).  Uncommitted kv-tuples do not yet have
-sequence numbers. If they were ingested into cN and later assigned a sequence
-number, the assigned number would be higher than sequence numbers for other
-unrelated kv-tuples that have not yet been ingested into cN.  This would
-violate the invariant.
+Recent changes in c0 allow transactions to store uncommitted kv-tuples in
+"struct c0_kvmultiset" objects long enough to be considered for ingest into
+cN.  Uncommitted kv-tuples do not yet have sequence numbers. If they were
+ingested into cN and later assigned a sequence number, the assigned number
+would be higher than sequence numbers for other unrelated kv-tuples that have
+not yet been ingested into cN.  This would violate the invariant.
 
 ## Requirements
 
@@ -138,7 +138,7 @@ c0kvms, and 2) creation of a new LC version after each ingest.
 KVS get requests traverse the active search path once.
 
 When cursors are created and updated, they obtain references on the objects in
-the active search path.  As the search path evolves, cursors left holding
+the active search path.  As the search path evolves, cursors are left holding
 references on objects no longer in the active search path.
 
 ### Details
@@ -363,7 +363,24 @@ LC queries originate from the following operations:
   - hse_kvs_cursor_read
   - hse_kvs_cursor_seek_range
 
-> TODO: Finish this section.
+To support point queries, the following functions will be implemented:
+```
+lc_get(struct lc);
+lc_pfx_probe(struct lc);
+```
+
+To support cursors, the following functions will be implemented:
+```
+lc_cursor_create(struct lc_cursor);
+lc_cursor_destroy(struct lc_cursor);
+lc_cursor_read(struct lc_cursor);
+lc_cursor_restore(struct lc_cursor);
+lc_cursor_seek(struct lc_cursor);
+lc_cursor_update(struct lc_cursor);
+```
+
+This mimics the cursor APIs for c0 and cN and should plug right into the
+existing KVS cursor implementation.  LOL.
 
 #### Task List
 
@@ -373,11 +390,11 @@ LC queries originate from the following operations:
   - We only need max, but it seems easy enough to initialize min to same value
     as previous c0kvms max.  Having both will allow for stronger safety checks
     in code to verify invariant *I1*.
-* Update kvs_cursor to have LC cursor in addition to c0 and cN cursors.
-  In theory, let it slide right into KVDB cursors as another source of
-  kv-tuples.  TODO: Dig deeper into this theory.
-
-> TODO: more tasks
+* Implement LC object
+* Implement LC garbage collection
+* Implement LC APIs used by ingest (scanning, creating snapshots, adding entries)
+* Implement LC cursor APIs
+* Implement lc_get and lc_pfx_probe APIs
 
 ## Failure and Recovery Handling
 
