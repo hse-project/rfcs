@@ -328,10 +328,13 @@ Transaction t4:
 
 An entry can be removed from LC when it is no longer needed in any LC
 snapshots.  Let *e* be an entry in LC.  Then *e* can be removed from LC when:
+
 - (GC1) *t* has been aborted,
+
 or:
+
 - (GC2a) *e* has been ingested into *c0kvms[d]*, and
-- (GC2b) snapshots *LC[i]*, for *d < i <= e.dgen_cN*, cannot be accessed by cursors, and
+- (GC2b) snapshots *LC[i]*, for *d < i <= e.dgen_c0*, cannot be accessed by cursors, and
 - (GC2c) snapshots *LC[i]*, for *d < i <= e.dgen_c0*, cannot be accessed by point queries.
 
 For correct garbage collection, HSE must be able to detect when the above
