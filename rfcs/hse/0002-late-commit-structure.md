@@ -34,7 +34,7 @@ not yet been ingested into cN.  This would violate the invariant.
 - **_c0kvms (struct c0_kvmultiset)_** -- A collection of kv-tuples in c0.
   Each KVDB has one **_active c0kvms__** and zero or more **_frozen
   c0kvms_**'s.  The active c0kvms stores incoming kv-tuples (from HSE puts,
-  gets, etc.).  When the active c0kvms becomes "full", it is frozen and a new
+  deletes, etc.).  When the active c0kvms becomes "full", it is frozen and a new
   active c0kvms is created.
 - **_ingest_** refers the process of migrating kv-tuples from the oldest
   c0kvms into cN, at which point it becomes the newest cN kvset.
@@ -44,7 +44,7 @@ not yet been ingested into cN.  This would violate the invariant.
   the dgen of the previous active c0kvms.  Dgen numbers persist
   across KVDB open/close so they are never reused for the
   life of a KVDB.  Dgen numbers follow data into cN.  cN kvsets
-  creating during ingest are associated with a single dgen (the same
+  created during ingest are associated with a single dgen (the same
   dgen as the ingested c0kvms).  cN kvsets created during
   compaction of M kvsets with dgen numbers *x* to *x\+M\-1* are
   associated with that range of dgen numbers.
@@ -176,13 +176,20 @@ Invariants:
   equal to all kv-tuples in *cnkvset[i+1]*.
 - **I3**: Search paths contain each kv-tuple in the KVDB exactly once.
 
-Some of these invariants are stronger than necessary. For example, *I1* and
+Some of these invariants are stronger than necessary. For example,
 *I2* could be weakened to allow out of order kv-tuples for kv-tuples with keys
 that can't shadow each other.  And *I3* could be weakened to allow a search
 path to contain duplicate kv-tuples.  But the stronger versions create a
 system that is in my opinion significantly easier to reason about without
 adding too much complexity or overhead.
 
+A weaker version of *I2* would be:
+- **I2**: (*kv_newer* in *cnkvset[i+1]* and *kv_older* in *cnkvset[i]* and
+  *overlap(kv_newer,kv_older)*) implies *seqno(kv_newer) >= seqno(kv_older)*.
+
+where:
+- *overlap(a,b)* is defined as: key *a* equals *b* or one is a prefix delete and
+  the other matches the prefix.
 
 #### Ingest
 
@@ -308,7 +315,7 @@ Transaction t2:
   - Stored in LC[1] during ingest(1) because, based on its seqno, we can't
     be sure it doesn't have another kv-tuple in c0kvms[2].
   - Ingested from LC[1] to cknvset[2] during ingest(2) because its seqno (4) <
-    c0kvms[2].max_non_txn_seqno (4).
+    c0kvms[2].max_non_txn_seqno (9).
 
 Transaction t3:
   - One tuple was saved in LC[1] during ingest(1), second tuple was saved in
