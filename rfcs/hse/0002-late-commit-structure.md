@@ -143,6 +143,10 @@ references on objects no longer in the active search path.
 
 ### Details
 
+c0snr review: each transaction is associated with a single c0snr (struct c0snr_set_entry).
+Each c0snr contains:
+- *c0snr.dgen*: the max dgen of all c0kvms's containing kv-tuples that reference c0snr.
+
 New per-KVDB state:
 - *KVDB.c0kvms_active_dgen*: the dgen of the active c0kvms
 
@@ -268,12 +272,10 @@ c0kvms can be used to detect the second condition as follows:
 ```
 Ingest criteria:
     is_ingestible(kv, dgen) <==>
-        (is_txn(kv) == false) ||
-        (is_committed(kv.c0snr) && c0kvms[dgen].max_seqno > committed_seqno(kv.c0snr))
+        (is_txn(kv) == false) || (is_committed(kv.c0snr) && dgen <= kv.c0snr.dgen)
 ```
 
 Note: Function *is_committed()* will be implemented as part of this work.
-
 
 Example:
 ```
@@ -314,7 +316,7 @@ Transaction t1:
 Transaction t2:
   - Stored in LC[1] during ingest(1) because, based on its seqno, we can't
     be sure it doesn't have another kv-tuple in c0kvms[2].
-  - Ingested from LC[1] to cknvset[2] during ingest(2) because its seqno (4) <
+  - Ingested from LC[1] to cnkvset[2] during ingest(2) because its seqno (4) <
     c0kvms[2].max_non_txn_seqno (9).
 
 Transaction t3:
@@ -340,7 +342,7 @@ snapshots.  Let *e* be an entry in LC.  Then *e* can be removed from LC when:
 
 or:
 
-- (GC2a) *e* has been ingested into *c0kvms[d]*, and
+- (GC2a) *e* has been ingested into *cnkvset[d]*, and
 - (GC2b) snapshots *LC[i]*, for *d < i <= e.dgen_c0*, cannot be accessed by cursors, and
 - (GC2c) snapshots *LC[i]*, for *d < i <= e.dgen_c0*, cannot be accessed by point queries.
 
@@ -375,22 +377,53 @@ LC queries originate from the following operations:
 
 To support point queries, the following functions will be implemented:
 ```
-lc_get(struct lc);
-lc_pfx_probe(struct lc);
+lc_get();
+lc_pfx_probe();
 ```
 
 To support cursors, the following functions will be implemented:
 ```
-lc_cursor_create(struct lc_cursor);
-lc_cursor_destroy(struct lc_cursor);
-lc_cursor_read(struct lc_cursor);
-lc_cursor_restore(struct lc_cursor);
-lc_cursor_seek(struct lc_cursor);
-lc_cursor_update(struct lc_cursor);
+lc_cursor_create();
+lc_cursor_destroy();
+lc_cursor_read();
+lc_cursor_restore();
+lc_cursor_seek();
+lc_cursor_update();
 ```
 
 This mimics the cursor APIs for c0 and cN and should plug right into the
 existing KVS cursor implementation.  LOL.
+
+#### LC Data Structure
+
+API:
+```
+lc_create();
+lc_destroy();
+
+// Point queries
+lc_get();
+lc_pfx_probe();
+
+// Cursor support
+lc_cursor_create();
+lc_cursor_destroy();
+lc_cursor_read();
+lc_cursor_restore();
+lc_cursor_seek();
+lc_cursor_update();
+
+// For ingest
+- create snapshots
+- batch update (populate a snapshot)
+- scan entries (use cursor interface?)
+- publish a snapshot (make it visible to queries)
+
+// For GC
+- scan entries (use cursor interface?)
+- remove entries
+- remove snapshots
+```
 
 #### Task List
 
