@@ -1,8 +1,6 @@
 
 # Ensuring transaction kv-tuples are committed before ingesting into cN
 
-> TODO: This RFC is mostly complete but a few open questions remain, which are marked with "TODO"
-
 ## Problem
 
 One of the invariants in cN is that newer kvsets contain newer data.
@@ -14,7 +12,7 @@ Recent changes in c0 allow transactions to store uncommitted kv-tuples in
 "struct c0_kvmultiset" objects long enough to be considered for ingest into
 cN.  Uncommitted kv-tuples do not yet have sequence numbers. If they were
 ingested into cN and later assigned a sequence number, the assigned number
-would be higher than sequence numbers for other unrelated kv-tuples that have
+would be higher than sequence numbers for other kv-tuples that have
 not yet been ingested into cN.  This would violate the invariant.
 
 ## Requirements
@@ -25,7 +23,27 @@ not yet been ingested into cN.  This would violate the invariant.
 
 - None?
 
-## Terminology and review
+## Solution
+
+### Overview
+
+This RFC proposes a new data structure referred to as the **_Late Commit_**
+structure, or simply **_LC_**.  There will be one LC per KVDB.
+
+During ingest, active txn kv-tuples will be stored in LC instead of being
+ingested into cN.  As transactions are aborted and committed, kv-tuples in LC
+will become aborted and committed.
+
+The ingest operation will scan LC to copy committed kv-tuples into
+cN. Ingested LC kv-tuples must eventually be garbage collected along with
+aborted LC kv-tuples.
+
+Txn reads will search LC for uncommitted kv-tuples belonging to the txn as
+well as for committed kv-tuples produced by other txns.  Non-txn reads will
+search LC for committed kv-tuples.  Both txn and non-txn reads will provide a
+view seqno when searching LC.
+
+### Terminology
 
 - **_kv-tuple_** -- A key and an associated value, tombstone or prefix
   tombstone.  Note that (prefix) delete operations are mutations that
@@ -52,351 +70,191 @@ not yet been ingested into cN.  This would violate the invariant.
   A txn kv-tuple can be active, committed or aborted (i.e., in the
   same state as the transaction that created it).
 
-## Solution
+Each c0kvms has a dgen number assigned when the c0kvms is made active. Dgen
+numbers are unique across the life of a KVDB and can be used to identify a
+particular c0kvms instance.  **_c0kvms[d]_** identifies the c0kvms with dgen *d*.
 
-### Overview
+For each kv-tuple *kv*, define:
+- **_is_txn(kv)_**       : true if and only if *kv* originated in a transaction
 
-This RFC proposes a new data structure referred to as the **_Late Commit_**
-structure, or simply **_LC_**.  There will be one LC per KVDB.
+For kv-tuples *kv* such that *is_txn(kv) == true*:
+- **_kv.txn_**         : the transaction that originated *kv*
+- **_kv.c0snr_**       : the c0snr entry associated with *kv.txn*
+- **_kv.c0snr.dgen_**  : the max dgen of all c0kvms's containing kv-tuples associated with *kv.c0snr*
 
-During ingest, active txn kv-tuples will be stored in LC instead of being
-ingested into cN.  As transactions are aborted and committed, kv-tuples in LC
-will become aborted and committed.
+The following definitions are defined so they apply in a logical way to
+non-txn and txn kv-tuples:
+- **_is_active(kv)_**    : *is_txn(kv)* and *kv.txn* is active
+- **_is_aborted(kv)_**   : *is_txn(kv)* and *kv.txn* has been aborted
+- **_is_committed(kv)_** : *!is_txn(kv)* or *kv.txn* has been committed
 
-The ingest operation will scan LC to copy committed kv-tuples into
-cN. Ingested LC kv-tuples must eventually be garbage collected along with
-aborted LC kv-tuples.
+All committed kv-tuples have a concrete sequence number.  For txn kv-tuples, it is assigned
+when the transaction commits.  For non-txn kv-tuples, it is assigned when the kv-tuple in
+inserted into the active c0kvms.
+- **_kv.seqno_** : if *is_committed(kv)*, the concrete sequence number assigned to *kv*, else undefined
 
-LC provides snapshot versioning so that reads have a stable view of the
-kv-tuples in LC.  Snapshots are based on dgens. Each ingest operation produces
-a new snapshot.  LC snapshots will not require extra kv-tuple or LC structure
-copies.
+For all kv-tuples *kv*, define:
+- **_overlap(kv1,kv2)_** : *kv1* and *kv2* have the same key, or one is a prefix
+  tombstone that matches the other's key
 
-Txn reads will search LC for uncommitted kv-tuples belonging to the txn as
-well as for committed kv-tuples produced by other txns.  Non-txn reads will
-search LC for committed kv-tuples.  Both txn and non-txn reads will provide a
-view seqno and a view dgen when searching LC.  The dgen identifies that LC
-snapshot being searched.
+Each KVDB has single LC object, where:
+- **_LC.entries_**: a set of kv-tuple objects
+- **_LC.view_seqno_min_**: a lower bound on the view seqno used by current and
+  future LC queries, increases monotonically over time
 
-### State Diagrams
+This section defines existing terminology.  Think of it as a review
+and as an attempt to avoid ambiguity.
 
-This RFC uses state diagrams as shown below to help explain how LC functions.
+### Seqno Ordering
 
-```
+In release 1.9, given two cN kvsets, every kv-tuple in the newer kvset
+has a seqno greater than or equal to every kv-tuple in the older kvset.
+This RFC relaxes this so the ordering only applies to keys that overlap.
+Informally, the new ordering invariant is:  given two kv-tuples in the same kvs, the kv-tuple in
+the newer c0kvms/LC/cnkvset has a larger sequence number than the
+kv-tuple in older c0kvms/LC/cnkvset.
 
-        .--  active c0kvms
-        |
-        V
-    +----------+     +----------+     +----------+
-    | c0kvms[3]|---->| c0kvms[2]|---->| c0kvms[1]|  <---- c0kvms[i] is the c0kvms
-    |----------|     |----------|     |----------|        with dgen == i.
-    | k/13..9  |     | k/9..4   |     | k/4..1   |
-    | t1:b/*   |     |          |     | t1:a/*   |
-    +----------+     +----------+     +----------+
-                `.               `.
-           .-->  :                :
-   active  |     :   +----------+ :   +----------+
-   search -'     `-->| LC[2]    | `-->| LC[1]    | <----  LC[i] is the snapshot of LC
-   path              |----------|     |----------|        immediately after ingesting
-                     | t1:a/*   |     | t1:a/*   |        c0kvms[i].
-                     +----------+     +----------+
-                          |                |
-                          V                V
-                     +----------+     +----------+
-                     |cnkvset[2]|---->|cnkvset[1]| <----- cnkvset[i] is the cN kvset
-                     |----------|     |----------|        with dgen == i.
-                     | k/9..4   |     | k/4..1   |
-                     +----------+     +----------+
+More formally, given a kv-tuple *kv*, define **_container(kv)_** to be the
+c0kvms or LC or cN kvset that contains *kv*.  Define **_newer than_** as a
+total order an all containers:
 
-Non-txn kv-tuples:
-  - 'k/18..13', 'k/13..9', etc. indicate the range of sequence numbers for non-txn
-    kv-tuples in a c0kvms, LC or cN kvset.
+*c1* is newer than *c2* if an only if:
+- *c1* is a c0kvms and *c2* is LC, or
+- *c1* is LC and *c2* is a cN kvset, or
+- *c1* has a higher dgen number than *c2*.
 
-Txn kv-tuples:
-  - Txn kv-tuples are indicated by 't1:a/*' where t1 represents the transaction, and
-    'a/*' represents a kv-tuple that has not been assigned a sequence number.  When t1
-    is committed, a sequence number is assigned and the annotation would be 't1:a/15' if
-    the sequence number were 15.
+The new seqno ordering invariant can now be stated as follows:
 
-Search paths:
-  - Search paths are shown with arrows and form a directed acyclic graph on the objects.
-    Multiple search paths are shown (two in this example).  All search paths start with
-    the active c0kvms.  The active search path is the one that drops to the
-    newest version of LC.
+Given two kv-tuples *kv1* and *kv2*, if:
+- *kv1* and *kv2* are in the same KVS, and
+- *overlap(kv1, kv2) == true*, and
+- *!is_txn(kv1) || is_committed(kv1)*, and
+- *!is_txn(kv2) || is_committed(kv2)*, and
+- *container(kv1)* is newer than *container(kv2)*,
 
-                  -----------------------------------------------
-                  Figure 1: Example state diagram and explanation
-                  -----------------------------------------------
-```
+Then:
+- *kv1.seqno >= kv2.seqno*.
 
-Note that each *LC[i]* is a different view of the same LC object instance,
-while *c0kvms[i]* and *cnkvset[i]* are distinct object instances.
+### Garbage Collection
 
-Two events can change the active search path: 1) creation of a new active
-c0kvms, and 2) creation of a new LC version after each ingest.
+An entry can be removed from LC when it no longer needed for LC
+queries.  Let *kv* be an entry in LC.  Then *kv* can be removed
+from LC if and only if *kv* has been ingested into cN
+and *kv.seqno < LC.view_seqno_min*, or if *kv* has been aborted.
 
-KVS get requests traverse the active search path once.
+Garbage collection will be implemented as part of the ingest
+operation.
 
-When cursors are created and updated, they obtain references on the objects in
-the active search path.  As the search path evolves, cursors are left holding
-references on objects no longer in the active search path.
+### Ingest
 
-### Details
+The ingest operation must take care not to break transaction atomicity.  Prior
+to the ingest pipeline work, atomicity was ensured because all kv-tuples for a
+transaction were part of the same ingest operation and ingest operations
+themselves are atomic.  In the new design, ingest operations are still atomic,
+but (1) the kv-tuples in the c0kvms being ingested can flip to the committed state
+while the ingest operation is in progress, and (2) a transaction’s kv-tuples
+can be spread among multiple c0kvms objects.
 
-c0snr review: each transaction is associated with a single c0snr (struct c0snr_set_entry).
-Each c0snr contains:
-- *c0snr.dgen*: the max dgen of all c0kvms's containing kv-tuples that reference c0snr.
+The first issue is handled by ensuring all ingested transaction
+kv-tuples are committed and have a seqno less or equal the seqno of
+any recently committed transaction.
 
-New per-KVDB state:
-- *KVDB.c0kvms_active_dgen*: the dgen of the active c0kvms
+There are two ways to deal with the second issue depending on use of the WAL:
+- *(USE_WAL==1)* Rely on knowledge that the WAL has persisted the
+  transaction's commit and all of its kv-tuples, or
+- *(USE_WAL==0)* Ensure all of a transaction's kv-tuples are in the
+  input c0kvms and LC before ingesting any of the transaction's
+  kv-tuples.
 
-New per-c0kvms state:
-- Each c0kvms has a dgen number assigned when the c0kvms is made active. Dgen
-  numbers are unique across the life of a KVDB and can be used to identify a
-  particular c0kvms instance.  *c0kvms[d]* identifies the c0kvms with dgen *d*.
-- *c0kvms[d].max_non_txn_seqno*: the maximum seqno of all non-txn kv-tuples in
-  *c0kvms[dgen]*.
-
-New LC object:
-- *LC.entries*: a set of LC entries
-
-LC entry *e* attributes:
-- *e.kv*: a kv-tuple
-- *e.kv.c0snr*: the c0snr associated with to *e.kv*
-- *e.dgen_c0*: the dgen of the c0kvms that originally contained *e.kv*
-- *e.dgen_cN*: the dgen of the cN kvset into which *e.kv* was ingested, or 0
-  if not yet ingested.
-
-Let *txn(e)* refer to the transaction that created *e*.
-
-LC is a versioned object:
-- *LC[d]* denotes the version of *LC* that existed immediately after ingesting
-  *c0kvms[d]*.
-
-Invariants:
-- **I1**: All non-txn kv-tuples in *c0kvms[i]* have sequence numbers less
-  than or equal to all non-txn kv-tuples in *c0kvms[i+1]*.
-- **I2**: All kv-tuples in *cnkvset[i]* have sequence numbers less than or
-  equal to all kv-tuples in *cnkvset[i+1]*.
-- **I3**: Search paths contain each kv-tuple in the KVDB exactly once.
-
-Some of these invariants are stronger than necessary. For example,
-*I2* could be weakened to allow out of order kv-tuples for kv-tuples with keys
-that can't shadow each other.  And *I3* could be weakened to allow a search
-path to contain duplicate kv-tuples.  But the stronger versions create a
-system that is in my opinion significantly easier to reason about without
-adding too much complexity or overhead.
-
-A weaker version of *I2* would be:
-- **I2**: (*kv_newer* in *cnkvset[i+1]* and *kv_older* in *cnkvset[i]* and
-  *overlap(kv_newer,kv_older)*) implies *seqno(kv_newer) >= seqno(kv_older)*.
-
-where:
-- *overlap(a,b)* is defined as: key *a* equals *b* or one is a prefix delete and
-  the other matches the prefix.
-
-#### Ingest
-
-Let *ingest(d)* be the operation that ingests *c0kvms[d]*, creating *LC[d]*
- and *cnkvset[d]*.  A high level view of the ingest operation is shown in figure 2.
+Let *ingest(d)* be the operation that ingests *c0kvms[d]*.  A high
+level view of the ingest operation is shown below.  Two versions
+are shown, one with *USE_WAL==1* and another with *USE_WAL==0*.
 
 ```
 ingest(d) {
 
   Inputs:
-    c0kvsm[d]; // NOT MODIFED
-    LC[d-1];   // NOT MODIFED
+    c0kvsm[d];
+    LC;
 
   Outputs:
-    LC[d]
+    LC;
     cnkvset[d]
 
   Algorithm:
-    Create snapshot LC[d], initally empty;
+
     Create instance cnkvset[d], initally empty;
 
-    Let merge(A, B) represent a the union of items in A and B sorted by key;
+    commit_seqno_max = get_recent_txn_commit_seqno();
 
-    For each item in merge(c0kvms[d], LC[d-1]) {
-      if (is_ingestible(item, d))
-        store item in cnkvset[d];
-      else if (is_txn(item) && ! is_aborted(item))
-        store item in LC[d];
-      else
-        null; // item is "dropped"
+  #if USE_WAL == 1
+    // ensures all committed txns with seqno <= commit_seqno_max are persisted in WAL
+    wal_sync();
+  #endif
+
+    Let merge(A, B) represent the union of kv-tuples in A and B sorted by key;
+
+    For each kv in merge(c0kvms[d], LC) {
+
+        enum { dest_discard, dest_lc, dest_ingest } dest;
+
+        kv_from_lc = (kv came from LC) ? true : false;
+
+        if (!is_txn(kv)) {
+            dest = dest_ingest;
+        }
+        else if (is_aborted(kv)) {
+            dest = dest_discard;
+        }
+        else if (is_active(kv)) {
+            dest = dest_lc;
+        }
+        else {
+  #if USE_WAL == 1
+            do_ingest = kv.seqno <= commit_seqno_max;
+  #else
+            do_ingest = kv.seqno <= commit_seqno_max && kv.c0snr.dgen <= d;
+  #endif
+            if (do_ingest) {
+                dest = dest_ingest;
+            } else {
+                invisible = kv.seqno < LC.view_seqno_min;
+                dest = invisible ? dest_discard : dest_lc;
+            }
+        }
+
+        switch (dest) {
+
+            case dest_discard:
+                if (kv_from_lc)
+                    lc_delete(LC, kv);
+                break;
+
+            case dest_ingest:
+                add kv to c0kvms[d];
+                if (kv_from_lc)
+                    lc_delete(LC, kv);
+                break;
+
+            case dest_lc:
+                if (!kv_from_lc)
+                    lc_add(LC, kv);
+                break;
+        }
     }
 }
 
-                --------------------------
-                Figure 2: Ingest operation
-                --------------------------
+                -----------------------------
+                Ingest and Garbage Collection
+                -----------------------------
 ```
 
-In the above algorithm for *ingest(d)*, the definitions of *is_txn()* and
-*is_aborted()* should be obvious.  But what about *is_ingestible()*?  When is
-an item ingestible into cN?  The answer is driven by two requirements:
-maintaining transaction atomicity and preserving invariant *I2*.
+### LC Data Structure and API
 
-To maintain transaction atomicity, we must ensure that either all or none of a
-transaction's kv-tuples are eventually ingested into cN.
+LC will be implemented as an RCU bonsai tree backed by dynamic memory
+allocation instead of by a *cheap*.
 
-Prior to the ingest pipeline work, atomicity was ensured because all kv-tuples
-for a transaction were part of the same ingest operation and ingest operations
-themselves are atomic.  In the new design, ingest operations are still atomic,
-but a transaction’s kv-tuples can be spread among multiple ingest operations.
-
-Two approaches come to mind:
-1. Ensure the entire txn is ingested at once. Ingest kv-tuples belonging to
-   transaction *t1* if and only if:
-   - (A1.1) *t1* is committed, and
-   - (A1.2) the union of *c0kvms[d]* and *LC[d-1]* contains all of *t1*’s kv-tuples.
-2. Rely on the write-ahead log (WAL).  Ingest kv-tuples belonging to
-   transaction *t1* if and only if
-   - (A2.1) *t1* is committed, and
-   - (A2.2) the WAL has persisted the *t1*’s commit and all of its kv-tuples.
-
-This design uses the approach #1 since it requires no interaction with WAL and
-it is "free" as long as invariant *I2* is required.  However, more information
-will be needed with timestamped transactions that can use multiple c0snrs (LC
-would need to know the maximum timestamp used by the transaction).
-
-> TODO: Reconsider this decision.  Timestamped transactions might force us to
-> weaken *I1* and *I2* as described above, and they may also force option #2.
-
-Continuing with approach #1, condition *A1.2* is true when all kv-tuples in
-all future ingests have seqnos greater than *t1*'s committed seqno.  Invariant
-*I1* implies that non-txn kv-tuple seqnos between neighboring c0kvms's
-can overlap by at most 1, therefore largest sequence number of the ingested
-c0kvms can be used to detect the second condition as follows:
-
-```
-Ingest criteria:
-    is_ingestible(kv, dgen) <==>
-        (is_txn(kv) == false) || (is_committed(kv.c0snr) && dgen <= kv.c0snr.dgen)
-```
-
-Note: Function *is_committed()* will be implemented as part of this work.
-
-Example:
-```
-+----------+     +----------+     +----------+     +----------+
-| c0kvms[4]|---->| c0kvms[3]|---->| c0kvms[2]|---->| c0kvms[1]|
-|----------|     |----------|     |----------|     |----------|
-| k/20..13 |     | k/13..9  |     | k/9..4   |     | k/4..1   |
-|          |     |          |     |          |     | t1:a/3   |
-|          |     |          |     |          |     | t2:b/4   |
-|          |     |          |     | t3:q/10  |     | t3:p/10  |
-|          |     | t4:z/*   |     | t4:y/*   |     | t4:x/*   |
-+----------+     +----------+     +----------+     +----------+
-            `.               `.               `.
-             :                :                :
-             :   +----------+ :   +----------+ :   +----------+
-             `-->| LC[3]    | `-->| LC[2]    | `-->| LC[1]    |
-                 |----------|     |----------|     |----------|
-                 | t4:x/*   |     | t3:p/10  |     | t2:b/4   |
-                 | t4:y/*   |     | t3:q/10  |     | t3:p/10  |
-                 | t4:z/*   |     | t4:x/*   |     | t4:x/*   |
-                 |          |     | t4:y/*   |     |          |
-                 +----------+     +----------+     +----------+
-                      |                |                |
-                      V                V                V
-                 +----------+     +----------+     +----------+
-                 |cnkvset[3]|---->|cnkvset[2]|---->|cnkvset[1]|
-                 |----------|     |----------|     |----------|
-                 | k/13..9  |     | k/9..4   |     | k/4..1   |
-                 | t3:p/10  |     | t2:b/4   |     | t1:a/3   |
-                 | t3:q/10  |     |          |     |          |
-                 +----------+     +----------+     +----------+
-
-Transaction t1:
-  - Ingested directly from c0kvms[1] into cnkvset[1] because at the time of
-    ingest its seqno (3) < c0kvsm[1].max_non_txn_seqno (4 -- see "k/4..1").
-    Txn t1 was never stored in LC.
-
-Transaction t2:
-  - Stored in LC[1] during ingest(1) because, based on its seqno, we can't
-    be sure it doesn't have another kv-tuple in c0kvms[2].
-  - Ingested from LC[1] to cnkvset[2] during ingest(2) because its seqno (4) <
-    c0kvms[2].max_non_txn_seqno (9).
-
-Transaction t3:
-  - One tuple was saved in LC[1] during ingest(1), second tuple was saved in
-    LC[2] during ingest(2), both due to seqno being too low.  Both ingested
-    during ingest(3).  Atomicity preserved.
-
-Transaction t4:
-  - Remains in LC since it hasn't been committed.
-
-          -----------------------------------------------
-          Figure 3: Example sequence of ingest operations
-          -----------------------------------------------
-```
-
-
-#### Garbage Collection
-
-An entry can be removed from LC when it is no longer needed in any LC
-snapshots.  Let *e* be an entry in LC.  Then *e* can be removed from LC when:
-
-- (GC1) *t* has been aborted,
-
-or:
-
-- (GC2a) *e* has been ingested into *cnkvset[d]*, and
-- (GC2b) snapshots *LC[i]*, for *d < i <= e.dgen_c0*, cannot be accessed by cursors, and
-- (GC2c) snapshots *LC[i]*, for *d < i <= e.dgen_c0*, cannot be accessed by point queries.
-
-For correct garbage collection, HSE must be able to detect when the above
-conditions are satisfied.  This will be implemented as follows:
-
-- Function *is_aborted()* will be implemented to determine when *GC1* is true.
-- If *e.dgen_cN > 0* then *e* has been ingested and *GC2a* is true.
-- Since cursors cannot access *LC[i]* after *c0kvms[i+1]* has been destroyed, we can use
-  *c0kvms* destruction a safe and reliable hint that *GC2b* is true.
-
-> TODO: For *GC2c* (point queries), do we append *LC[i]* to the end of the RCU list of
-> c0kvms's? Still thinking about this.
-
-> TODO: Determine when events will trigger GC and on what thread garbage
-> collection will take place.  It could be triggered when any of conditions
-> become true, or perhaps monitoring a subset of conditions is sufficient.  It
-> could also be a periodic task, or based on internal stats of LC.
-
-#### Queries
-
-LC queries originate from the following operations:
-- Point queries:
-  - hse_kvs_get
-  - hse_kvs_prefix_probe
-- Cursor operations:
-  - hse_kvs_cursor_create
-  - hse_kvs_cursor_update
-  - hse_kvs_cursor_seek
-  - hse_kvs_cursor_read
-  - hse_kvs_cursor_seek_range
-
-To support point queries, the following functions will be implemented:
-```
-lc_get();
-lc_pfx_probe();
-```
-
-To support cursors, the following functions will be implemented:
-```
-lc_cursor_create();
-lc_cursor_destroy();
-lc_cursor_read();
-lc_cursor_restore();
-lc_cursor_seek();
-lc_cursor_update();
-```
-
-This mimics the cursor APIs for c0 and cN and should plug right into the
-existing KVS cursor implementation.  LOL.
-
-#### LC Data Structure
-
-API:
+LC API:
 ```
 lc_create();
 lc_destroy();
@@ -406,6 +264,8 @@ lc_get();
 lc_pfx_probe();
 
 // Cursor support
+// - These APIs mimic cursor APIs for c0 and cN and should plug right
+//   into the existing KVS cursor implementation.  LOL.
 lc_cursor_create();
 lc_cursor_destroy();
 lc_cursor_read();
@@ -413,36 +273,26 @@ lc_cursor_restore();
 lc_cursor_seek();
 lc_cursor_update();
 
-// For ingest
-- create snapshots
-- batch update (populate a snapshot)
-- scan entries (use cursor interface?)
-- publish a snapshot (make it visible to queries)
-
-// For GC
-- scan entries (use cursor interface?)
-- remove entries
-- remove snapshots
+// For ingest and garbage-collection
+lc_entry_add();
+lc_entry_remove();
 ```
-
-#### Task List
-
-* Mint dgens and assign to active c0kvms
-  - Must get dgen from cN now.  Should eventually persist dgen in WAL.
-* Track min/max non-txn seqnos in c0kvms
-  - We only need max, but it seems easy enough to initialize min to same value
-    as previous c0kvms max.  Having both will allow for stronger safety checks
-    in code to verify invariant *I1*.
-* Implement LC object
-* Implement LC garbage collection
-* Implement LC APIs used by ingest (scanning, creating snapshots, adding entries)
-* Implement LC cursor APIs
-* Implement lc_get and lc_pfx_probe APIs
 
 ## Failure and Recovery Handling
 
-> TODO
+- *lc_create()* will be called during *hse_kvdb_open()*.  If
+  *lc_create()* fails, then *hse_kvdb_open()* will fail.
+- If an entry cannot be stored in *LC* during ingest, the transaction
+  will be canceled.  But there's a race here because the application
+  might have committed the transaction right after the ingest started.
+  - **TODO**: How do we recover from this?  You might think: if it's
+    committed, then go ahead and ingest it.  But that would require
+    restarting the merge loop, which essentially means aborting the
+    ingest operation and starting over.
 
 ## Testing Guidance
 
-> TODO
+A good test workload consists of long-lived transactions that insert
+kv-tuples along with a moderate to high rate of non-txn put
+operations.  The non-txn put operations will force ingests, and the
+long-lived transactions will force use of LC.
