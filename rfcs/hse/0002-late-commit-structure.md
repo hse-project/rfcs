@@ -21,7 +21,7 @@ not yet been ingested into cN.  This would violate the invariant.
 
 ## Non-Requirements
 
-- None?
+- Design must not ingest uncommitted data
 
 ## Solution
 
@@ -72,7 +72,11 @@ view seqno when searching LC.
 
 Each c0kvms has a dgen number assigned when the c0kvms is made active. Dgen
 numbers are unique across the life of a KVDB and can be used to identify a
-particular c0kvms instance.  **_c0kvms[d]_** identifies the c0kvms with dgen *d*.
+particular c0kvms instance.
+- **_c0kvms[d]_** : identifies the c0kvms with dgen *d*
+- **_c0kvms[d].txn_seqno_frozen_** : the commit seqno of a txn that was committed
+  before c0kvms[d] was frozen.
+- **_c0kvms[d].txn_seqno_min_** : alias for *c0kvms[d-1].txn_seqno_frozen*, or *0* if *d==1*.
 
 For each kv-tuple *kv*, define:
 - **_is_txn(kv)_**       : true if and only if *kv* originated in a transaction
@@ -81,6 +85,7 @@ For kv-tuples *kv* such that *is_txn(kv) == true*:
 - **_kv.txn_**         : the transaction that originated *kv*
 - **_kv.c0snr_**       : the c0snr entry associated with *kv.txn*
 - **_kv.c0snr.dgen_**  : the max dgen of all c0kvms's containing kv-tuples associated with *kv.c0snr*
+- **_kv.ingested_**    : true if *kv* is in LC and has already been ingested
 
 The following definitions are defined so they apply in a logical way to
 non-txn and txn kv-tuples:
@@ -101,9 +106,6 @@ Each KVDB has single LC object, where:
 - **_LC.entries_**: a set of kv-tuple objects
 - **_LC.view_seqno_min_**: a lower bound on the view seqno used by current and
   future LC queries, increases monotonically over time
-
-This section defines existing terminology.  Think of it as a review
-and as an attempt to avoid ambiguity.
 
 ### Seqno Ordering
 
@@ -157,7 +159,7 @@ can be spread among multiple c0kvms objects.
 
 The first issue is handled by ensuring all ingested transaction
 kv-tuples are committed and have a seqno less or equal the seqno of
-any recently committed transaction.
+any recently committed transaction (see *c0kvms[d].txn_seqno_frozen*).
 
 There are two ways to deal with the second issue depending on use of the WAL:
 - *(USE_WAL==1)* Rely on knowledge that the WAL has persisted the
@@ -166,9 +168,12 @@ There are two ways to deal with the second issue depending on use of the WAL:
   input c0kvms and LC before ingesting any of the transaction's
   kv-tuples.
 
-Let *ingest(d)* be the operation that ingests *c0kvms[d]*.  A high
-level view of the ingest operation is shown below.  Two versions
-are shown, one with *USE_WAL==1* and another with *USE_WAL==0*.
+We use the second approach (*USE_WAL==0*) approach because it provides an easy way
+to "assign" each transaction to an ingest operation, which is helpful for supporting
+concurrent ingest operations.  We can revisit this when the WAL is available to more
+efficiently support large transactions.
+
+Algorithm for ingesting c0kvms with dgen d:
 
 ```
 ingest(d) {
@@ -178,70 +183,85 @@ ingest(d) {
     LC;
 
   Outputs:
-    LC;
     cnkvset[d]
+    LC;
 
   Algorithm:
 
+    assert(c0kvms[d].txn_seqno_frozen >= c0kvms[d].txn_seqno_min);
     Create instance cnkvset[d], initally empty;
-
-    commit_seqno_max = get_recent_txn_commit_seqno();
-
-  #if USE_WAL == 1
-    // ensures all committed txns with seqno <= commit_seqno_max are persisted in WAL
-    wal_sync();
-  #endif
-
+    Let new_lc_entries be a list of kv-tuples, initally empty;
     Let merge(A, B) represent the union of kv-tuples in A and B sorted by key;
 
     For each kv in merge(c0kvms[d], LC) {
 
-        enum { dest_discard, dest_lc, dest_ingest } dest;
+        kv_from_kvms = (kv came from c0kvms[d]) ? true : false;
+        ingest = false;
 
-        kv_from_lc = (kv came from LC) ? true : false;
-
-        if (!is_txn(kv)) {
-            dest = dest_ingest;
-        }
-        else if (is_aborted(kv)) {
-            dest = dest_discard;
-        }
-        else if (is_active(kv)) {
-            dest = dest_lc;
+        if (kv_from_kvms) {
+            if (!is_txn(kv)) {
+                ingest = true;
+            } else if (is_aborted(kv)) {
+                ; // Do nothing.
+            } else if (is_active(kv)) {
+                add kv to new_lc_entries;
+            } else {
+                assert(is_committed(kv));
+                assert(kv.seqno > c0kvms[d].txn_seqno_min);
+                if (kv.seqno <= c0kvms[d].txn_seqno_frozen) {
+                    // We have all kv-tuples for this txn, so it is safe to ingest.
+                    ingest = true;
+                } else {
+                    // This will be handled by a future ingest.  Note this forces
+                    // ingest operations to be serialized, but we have a fix to
+                    // enable concurrent ingest.  We can split this for-loop into
+                    // two parts: part 1 would be serialized and would include
+                    // modifications to LC, part 2 would be concurrent and would
+                    // include creating the output cnkvset.
+                    add kv to new_lc_entries;
+                }
+            }
         }
         else {
-  #if USE_WAL == 1
-            do_ingest = kv.seqno <= commit_seqno_max;
-  #else
-            do_ingest = kv.seqno <= commit_seqno_max && kv.c0snr.dgen <= d;
-  #endif
-            if (do_ingest) {
-                dest = dest_ingest;
+            assert(is_txn(kv));
+            if (is_aborted(kv)) {
+                kv.gc = true;
+            } else if (is_active(kv)) {
+                ; // do nothing
             } else {
-                invisible = kv.seqno < LC.view_seqno_min;
-                dest = invisible ? dest_discard : dest_lc;
+                assert(is_committed(kv));
+                beyond_horizon = kv.seqno < LC.view_seqno_min;
+                if (kv.seqno <= c0kvms[d].txn_seqno_min) {
+                    // An old txn, might have been left in LC due to seqno horizon.
+                    // If it has been ingested and beyond horizon, mark it for GC.
+                    // Note the beyond_horizon check could be done in the GC task
+                    // instead of here.
+                    if (kv.ingested && beyond_horizon && !kv.gc)
+                        kv.gc = true;
+                } else if (kv.seqno <= c0kvms[d].txn_seqno_frozen) {
+                    // This txn has been "assigned" to this ingest operation.
+                    // In addition, we have all kv-tuples for this txn, so it
+                    // is safe to ingest.
+                    ingest = true;
+                    kv.ingested = true;
+                    kv.gc = beyond_horizon;
+                } else {
+                    ; // Do nothing.  This txn will be handled by a future ingest.
+                }
             }
         }
 
-        switch (dest) {
-
-            case dest_discard:
-                if (kv_from_lc)
-                    lc_delete(LC, kv);
-                break;
-
-            case dest_ingest:
-                add kv to c0kvms[d];
-                if (kv_from_lc)
-                    lc_delete(LC, kv);
-                break;
-
-            case dest_lc:
-                if (!kv_from_lc)
-                    lc_add(LC, kv);
-                break;
+        if (ingest) {
+            add kv to cnkvset[d];
         }
     }
+
+    // After the output cnkvset has been published:
+
+    get LC write lock;
+    for each (kv in new_lc_entries)
+        lc_add(LC, kv);
+    release LC write lock;
 }
 
                 -----------------------------
@@ -272,23 +292,15 @@ lc_cursor_read();
 lc_cursor_restore();
 lc_cursor_seek();
 lc_cursor_update();
-
-// For ingest and garbage-collection
-lc_entry_add();
-lc_entry_remove();
 ```
 
 ## Failure and Recovery Handling
 
-- *lc_create()* will be called during *hse_kvdb_open()*.  If
-  *lc_create()* fails, then *hse_kvdb_open()* will fail.
-- If an entry cannot be stored in *LC* during ingest, the transaction
-  will be canceled.  But there's a race here because the application
-  might have committed the transaction right after the ingest started.
-  - **TODO**: How do we recover from this?  You might think: if it's
-    committed, then go ahead and ingest it.  But that would require
-    restarting the merge loop, which essentially means aborting the
-    ingest operation and starting over.
+- *lc_create()* will be called during *hse_kvdb_open()*.  If *lc_create()* fails,
+  then *hse_kvdb_open()* will fail.
+- The ingest operation can fail due to problems with memory allocation or media
+  writes.  In either case, the system must be shutdown.  This design does not
+  provide a way to back out of partially completed ingestg operation.
 
 ## Testing Guidance
 
