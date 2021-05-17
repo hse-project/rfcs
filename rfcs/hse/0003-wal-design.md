@@ -673,3 +673,10 @@ Discussed in the WAL replay path section.
 
 All c1 tests written to exercise various crash/replay scenarios can be used
 for testing WAL.
+
+## References
+
+- [mysql-8-0-new-lock-free-scalable-wal-design](https://mysqlserverteam.com/mysql-8-0-new-lock-free-scalable-wal-design/)
+- [Scalability of write-ahead logging on multicore and multisocket hardware](https://dl.acm.org/doi/10.1007/s00778-011-0260-8)
+- [Scalable Database Logging for Multicores](http://www.vldb.org/pvldb/vol11/p135-jung.pdf)
+- [Rethinking Logging, Checkpoints, and Recovery for High-Performance Storage Engines](https://db.in.tum.de/~leis/papers/rethinkingLogging.pdf)
