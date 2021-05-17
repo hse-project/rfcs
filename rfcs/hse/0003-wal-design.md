@@ -235,75 +235,60 @@ can be named as *wal_\<dgen\>_\<id\>*.
 #### WAL file format
 
 - An WAL file is a collection of record groups. Each record group is a collection
-  of one or more records (kv-mutations) accumulated in one durability/sync interval
-  in a WAL buffer.
+  of one or more records (kv-mutations) accumulated in an WAL buffer in one
+  durability/sync interval.
 
-- Each WAL file contains an 4K-header with the following 8B fields.
+- Each WAL file contains a 4K-header followed by zero or more record groups.
+  The txpinfo section is optional.
 ```
-  -----------------------------------------------------------------------------------
-  |       |      |       |      |         |        |      |      |        |         |
-  | cksum | vers | magic | dgen | rgcount | txpoff | rg 1 | .... | rg n   | txpinfo |
-  |       |      |       |      |         |        |      |      |        |         |
-  -----------------------------------------------------------------------------------
+  ------------------------------------------------------------------------
+  |       |       |      |        |       |      |      |      |         |
+  | vers  | magic | dgen | txpoff | cksum | rg 1 | .... | rg n | txpinfo |
+  |       |       |      |        |       |      |      |      |         |
+  ------------------------------------------------------------------------
                                     WAL File
 
-  cksum:    checksum of fields [vers..txpoff]
   dgen:     dgen of the c0kvms instance
-  rgcount:  count of record groups in this WAL file
-  txpoff:   file offset where the txpinfo section resides
+  txpoff:   txpinfo section start offset
+  cksum:    checksum of the preceding fields
   rg[1..n]: record groups
   txpinfo:  pending txids written after an WAL file is frozen
 
 ```
 
-- Each record group is variably sized and contains a fixed size header (8B fields).
+- A record group is a collection of records demarcated by the record type
+  WAL_TYPE_EORG. The records in an record group are variably sized. The size
+  of a record depends on the size of the kv-mutation (put, del, pfx-del)
+  logged by this record. All record header fields are 8B in length.
 
 ```
-  -------------------------------------------------------------
-  |       |       |      |       |          |      |          |
-  | cksum | rtype | rgid | rgcnt | record 1 | .... | record n |
-  |       |       |      |       |          |      |          |
-  -------------------------------------------------------------
-                         WAL Record Group
+  --------------------------------------------------------------------------------------
+  |       |       |      |       |       |       |      |        |     |       |       |
+  | rlen  | rtype | LSN  | rec 1 | cksum | ...   | rlen | rtype  | LSN | rec m | cksum |
+  |       |  (RG) |      |       |       |       |      | (EORG) |     |       |       |
+  --------------------------------------------------------------------------------------
+                                     WAL Records
 
-  cksum: optional checksum for all fields that follow
-  rtype: WAL_RECORD_GROUP
-  rgid:  record group ID
-  rgcnt: count of records in this record group
-```
-
-- The records in an record group are also variably sized. The size of each record
-  depends on the size of a kv-mutation (put, del, pfx-del). All record header
-  fields are 8B in length.
-
-```
-  ----------------------------------------------------------------
-  |       |     |      |       |     |       |     |     |       |
-  | rtype | LSN | rlen | rec 1 | ... | rtype | LSN |rlen | rec m |
-  |       |     |      |       |     |       |     |     |       |
-  ----------------------------------------------------------------
-                           WAL Records
-
-  *rtype:*
-       WAL_OP:           non-tx put/del/pfx-del record
+  rlen: record size (pointer to the next record)
+  rtype:
+       WAL_TYPE_RG:      start/middle of a record group
+       WAL_TYPE_EORG:    end of a record group
+       WAL_OP_NONTX:     non-tx put/del/pfx-del record
        WAL_OP_TX:        tx put/del/pfx-del record
        WAL_OP_TX_BEGIN:  tx begin record
        WAL_OP_TX_COMMIT: tx commit record
        WAL_OP_TX_ABORT:  tx abort record
-  *LSN:*  Log sequence number of this record
-  *rlen:* record size
+  LSN:   Log sequence number of this record
+  rec m: record payload
+  cksum: checksum for the whole record
 ```
 
 *Key Points:*
 
-- The record group is variably sized to avoid the additional memory copies
-  incurred for framing records exceeding record group size
-- As a record is never broken down for framing, it enables c0 to share the
-  key and value data from the WAL buffer
-- **TODO:** How to prepend record group header as it's not possible to
-  reserve space in the buffer ahead of time for a variable size rg? One
-  option is to allocate rg header from a secondary buffer and write the
-  rg header and payload to the WAL file using sg-list.
+- Both record group and records are variably sized. So, a record is never
+  broken down for framing which has the following benefits -
+  (1) Avoids framing related memory copies
+  (2) Enables c0 to share the key and value data from the WAL buffer
 
 
 ### WAL Logging Path
@@ -320,7 +305,7 @@ Tclient: wal_op()/wal_txn_op()
     buf  = NUMA local wal buffer;
     len  = sizeof(wal_record) + klen + vlen;
     woff = atomic64_fetch_add(len, buf->off);
-    lsn = jclock_ns;
+    lsn = atomic64_inc_return(&kvdb_lsn);
 
     initialize record header and WAL record at buf[woff];
     copy key and value data into the WAL record;
@@ -357,7 +342,10 @@ TX-OP     <txid> <op> <cnid> <dgen> <seqno> <klen> <vlen> <kvdata>
 
 The HSE minted commit sequence number is sufficient to order client
 transactions at replay time. The LSN can be used further to order
-operations within a transaction.
+operations within a transaction. If maintaining a global atomic for
+LSN proves to be a bottleneck, then the LSN could be a per-transaction
+entity for tx-mutations and the global atomic can be used purely for
+non-tx mutations.
 
 The ingest pipeline work imposes the following behavioral change on how
 transactions are implemented:
@@ -370,9 +358,7 @@ As a result of (1) and (2), the WAL files for an ingested dgen *d* cannot
 be reclaimed as it can contain active transaction kv-tuples that are
 required during WAL replay in the event of a crash.
 
-Below are two alternatives to address this problem.
-
-**_Alternative-1:_**
+An approach to solve the above problem is as follows:
 
 During the ingest of a c0kvms with dgen *d*, the LC is populated with
 those txn kv-tuples that are either (1) active, i.e., uncommitted or
@@ -384,7 +370,8 @@ As LC is already aware of the list of active transactions in an ingest
 operation, it can communicate a list of active TXIDs to WAL during
 or post cN ingest. This interaction of LC with WAL is warranted, otherwise,
 tracking pending txn ids in WAL adds unnecessary complexity and duplicates
-state that LC already tracks.
+state that LC already tracks. This information can be piggybacked in the
+cN ingest callback (*struct kvdb_callback*) which WAL can subscribe to.
 
 Using the callbacks from LC, WAL maintains a pending txid list in-core
 for each ingested dgen. As soon as WAL realizes that all pending
@@ -400,39 +387,12 @@ section for all dirty WAL files whose *dgen < ingest_dgen*. If the
 got completely written into an WAL file, WAL replay can reconstitute this
 information by parsing all the WAL records in the WAL file of interest.
 
-In this alternative, the WAL buffer space reclamation is much simpler,
-as the tx mutations are written into WAL as they occur and WAL doesn't
-need to wait for the txs to resolve prior to reclaiming it.
-
-
-**_Alternative-2:_**
-
-The other alternative is to have WAL persist only committed transactions.
-Here WAL maintains its own transaction pending list for a live KVDB.
-After a transaction commits, its kv-mutations are written in the next
-durability interval. Aborted transactions are never written into the
-WAL files.
-
-This alternative simplifies WAL disk space reclamation as the WAL
-file(s) associated with a dgen can be safely discarded post ingest,
-as it contains only committed transaction kv-tuples.
-**TODO:** Possible only if c0 ingests all committed kv-tuples in a
-c0kvms including kv-tuples that got committed after a c0kvms is
-frozen.
-
-The disadvantage with this approach is that it complicates WAL buffer
-space reclamation. The WAL buffer need to stay around until all active
-transactions in it has been resolved, i.e., either committed and written
-to the WAL files or aborted by the client/LC. This increases memory
-consumption, complicates the logging path which is highly performance
-sensitive, and duplicates LC's functionality.
-
-
-**_Recommendation:_**
-My vote is for Alternative-1 as it keeps the logging path both cleaner
-and straightforward. The WAL replay path becomes a bit complicated,
+The WAL buffer space reclamation is simpler as the tx mutations are written
+into WAL as they occur and WAL doesn't need to wait for the txs to resolve
+prior to reclaiming it. The WAL replay path becomes a bit complicated,
 however, it's worth the additional time/space complexity for a rare
 crash/replay scenario.
+
 
 #### cN ingest
 
@@ -466,13 +426,9 @@ wal_nontx_replay(wal_file_list) {
 
 #### Transaction writes
 
-The below replay logic is based on *Alternative-1* in the WAL logging section.
-
 The key difference in replaying tx-writes compared to non-tx writes is that
 an WAL file whose dgen <= ingest_dgen can still contain pending transactional
 mutations and hence cannot be reclaimed/skipped until those are resolved.
-
-For *Alternative-2*, the tx-replay is similar to replaying non-tx writes.
 
 
 ```
@@ -556,11 +512,6 @@ merr_t wal_open(struct ikvdb *kvdb, u64 walid, bool rdonly, struct wal **wal);
 merr_t wal_props_get(struct wal *wal, struct wal_props *props);
 
 /**
- * wal_discard() - invoked post cN ingest by c0 for space/buffer reclamation
- */
-merr_t wal_discard(struct wal *wal, u64 ingest_dgen);
-
-/**
  * wal_sync() - sync WAL buffers to media
  */
 merr_t wal_sync(struct wal *wal);
@@ -575,6 +526,11 @@ merr_t wal_flush(struct wal *wal);
  */
 merr_t wal_close(struct wal *wal);
 
+/**
+ * wal_ingest_cb() - ikvdb cb registered by WAL to be invoked post cN ingest
+ */
+merr_t wal_ingest_cb(struct ikvdb *ikvdb, uint64_t cnid, uint64_t seqno, uint64_t status,
+                     int txidc, uint64_t *txidv);
 ```
 
 
