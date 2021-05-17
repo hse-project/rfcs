@@ -41,7 +41,7 @@ The data in c0 is volatile and is lost in the event of a crash or power loss.
 - **_dgen_** -- A monotonically increasing generation number assigned to each
   c0_kvmultiset
 
-- **_LSN_** -- Log Sequence Number, a monotonically increasing timestamp attached
+- **_rid_** -- Record ID, a monotonically increasing unique number attached
   to each kv-mutation
 
 - **_durability-interval_** -- All kv-mutations that occur before the configured
@@ -178,10 +178,8 @@ Tlog-flusher: log_flush(buf)
             advance flush_boundary by size(next_op);
         }
 
-        rg_payload = buf[flush_start, flush_end]
-        alloc and format rg_header in a separate buf
-	record_group = sg list [rg_header, rg_payload]
-        enqueue(log_writer_queue(buf), record_group)
+        rg = buf[flush_start, flush_end]
+        enqueue(log_writer_queue(buf), rg)
 
         wakeup Tlog-writer(buf);
     }
@@ -234,54 +232,68 @@ can be named as *wal_\<dgen\>_\<id\>*.
 
 #### WAL file format
 
-- An WAL file is a collection of record groups. Each record group is a collection
-  of one or more records (kv-mutations) accumulated in an WAL buffer in one
-  durability/sync interval.
+- __WAL-File = File-Header + Record-Group * + Txpinfo__
 
-- Each WAL file contains a 4K-header followed by zero or more record groups.
-  The txpinfo section is optional.
-```
-  ------------------------------------------------------------------------
-  |       |       |      |        |       |      |      |      |         |
-  | vers  | magic | dgen | txpoff | cksum | rg 1 | .... | rg n | txpinfo |
-  |       |       |      |        |       |      |      |      |         |
-  ------------------------------------------------------------------------
-                                    WAL File
-
-  dgen:     dgen of the c0kvms instance
-  txpoff:   txpinfo section start offset
-  cksum:    checksum of the preceding fields
-  rg[1..n]: record groups
-  txpinfo:  pending txids written after an WAL file is frozen
+- __File-Header__ = A fixed-size header per file containing the following fields:
 
 ```
+  -----------------------------------------
+  | vers  | magic | dgen | txpoff | cksum |
+  -----------------------------------------
+              WAL File Header
 
-- A record group is a collection of records demarcated by the record type
-  WAL_TYPE_EORG. The records in an record group are variably sized. The size
-  of a record depends on the size of the kv-mutation (put, del, pfx-del)
-  logged by this record. All record header fields are 8B in length.
+  vers:   WAL version
+  magic:  WAL magic
+  dgen:   dgen of the c0kvms instance corresponding to this file
+  txpoff: start offset of the Txpinfo section
+  cksum:  checksum of the preceding fields
+```
+- __Record-Group = Record *__
+
+A record group is a sequence of one or more records (kv-tuples) accumulated in
+an WAL buffer in one durability/sync interval. All records in a record group
+except the last record have the continuation bit EORG=0. EORG=1 terminates a
+record group. Record group helps to establish checkpoints used during WAL replay.
 
 ```
-  --------------------------------------------------------------------------------------
-  |       |       |      |       |       |       |      |        |     |       |       |
-  | rlen  | rtype | LSN  | rec 1 | cksum | ...   | rlen | rtype  | LSN | rec m | cksum |
-  |       |  (RG) |      |       |       |       |      | (EORG) |     |       |       |
-  --------------------------------------------------------------------------------------
-                                     WAL Records
+  --------------------------------------------
+  | record 1  | record 2  | .... | record m  |
+  |(EORG = 0) |(EORG = 0) |      |(EORG = 1) |
+  --------------------------------------------
+       WAL Record Group ('m' records)
+```
+- __Record = Record-Header + Record-Data + Record-Checksum__
+
+- __Record-Header__ = A fixed-size header per record containing the following fields:
+
+```
+  ----------------------
+  | rlen | rtype | rid |
+  ----------------------
+      WAL Record Header
 
   rlen: record size (pointer to the next record)
   rtype:
-       WAL_TYPE_RG:      start/middle of a record group
-       WAL_TYPE_EORG:    end of a record group
-       WAL_OP_NONTX:     non-tx put/del/pfx-del record
-       WAL_OP_TX:        tx put/del/pfx-del record
-       WAL_OP_TX_BEGIN:  tx begin record
-       WAL_OP_TX_COMMIT: tx commit record
-       WAL_OP_TX_ABORT:  tx abort record
-  LSN:   Log sequence number of this record
-  rec m: record payload
-  cksum: checksum for the whole record
+       WAL_RT_NONTX:    non-tx put/del/pfx-del record
+       WAL_RT_TX:       tx put/del/pfx-del record
+       WAL_RT_TXBEGIN:  tx begin record
+       WAL_RT_TXCOMMIT: tx commit record
+       WAL_RT_TXABORT:  tx abort record
+  rid: Record ID
 ```
+- __Record-Data__ = Record data for tx and non-tx mutations
+
+```
+NONTX-OP <op> <cnid> <dgen> <seqno> <klen> <vlen> <kvdata>
+
+TX-BEGIN  <txid>
+TX-ABORT  <txid>
+TX-COMMIT <txid> <commit-seqno>
+TX-OP     <txid> <op> <cnid> <dgen> <seqno> <klen> <vlen> <kvdata>
+```
+- __Record-Checksum__ = A checksum of Record-Header + Record-Data
+
+- __Txpinfo__ = List of active txids in the WAL file's dgen
 
 *Key Points:*
 
@@ -294,10 +306,10 @@ can be named as *wal_\<dgen\>_\<id\>*.
 ### WAL Logging Path
 
 With kv-mutations spread across multiple WAL files, the WAL component needs an
-monotonically increasing log sequence number (LSN) to order kv-mutations.
+monotonically increasing record ID (rid) to order kv-mutations.
 
-The LSN must be unique across multiple WAL buffers and across KVSes in a KVDB.
-The LSN captures the arrival order of kv-mutations.
+The rid must be unique across multiple WAL buffers and across KVSes in a KVDB.
+The rid captures the arrival order of kv-mutations.
 
 ```
 Tclient: wal_op()/wal_txn_op()
@@ -305,7 +317,7 @@ Tclient: wal_op()/wal_txn_op()
     buf  = NUMA local wal buffer;
     len  = sizeof(wal_record) + klen + vlen;
     woff = atomic64_fetch_add(len, buf->off);
-    lsn = atomic64_inc_return(&kvdb_lsn);
+    rid = atomic64_inc_return(&kvdb_rid);
 
     initialize record header and WAL record at buf[woff];
     copy key and value data into the WAL record;
@@ -317,15 +329,11 @@ Tclient: wal_op()/wal_txn_op()
 
 The HSE minted logical sequence number is not sufficient to order non-tx
 writes as it is not bumped for every non-tx op. WAL replay fully relies
-on LSN to order non-tx kv-mutations.
+on rid to order non-tx kv-mutations.
 
 For non-tx writes, the seqno is not established prior to calling ikvs_put.
 The seqno can be filled in the WAL buffer by c0 once it's available, i.e.,
 before returning from ikvs_put().
-
-```
-NONTX-OP <op> <cnid> <dgen> <seqno> <klen> <vlen> <kvdata>
-```
 
 #### Tansaction writes
 
@@ -333,17 +341,10 @@ A KVDB client txn is uniquely identified by its transaction id (TID).
 For a non-timestamped KVS, the view seqno bumped at tx begin is used
 as the transaction identifier.
 
-```
-TX-BEGIN  <txid>
-TX-ABORT  <txid>
-TX-COMMIT <txid> <commit-seqno>
-TX-OP     <txid> <op> <cnid> <dgen> <seqno> <klen> <vlen> <kvdata>
-```
-
 The HSE minted commit sequence number is sufficient to order client
-transactions at replay time. The LSN can be used further to order
+transactions at replay time. The rid can be used further to order
 operations within a transaction. If maintaining a global atomic for
-LSN proves to be a bottleneck, then the LSN could be a per-transaction
+rid proves to be a bottleneck, then the rid could be a per-transaction
 entity for tx-mutations and the global atomic can be used purely for
 non-tx mutations.
 
@@ -359,12 +360,12 @@ be reclaimed as it can contain active transaction kv-tuples that are
 required during WAL replay in the event of a crash.
 
 An approach to solve the above problem is as follows:
+(**TODO:** Still thinking if there's a simpler but lazy reclamation logic)
 
 During the ingest of a c0kvms with dgen *d*, the LC is populated with
 those txn kv-tuples that are either (1) active, i.e., uncommitted or
-(2) committed after c0kvms(d) is frozen(**TODO:** Check this with Alex).
-These kv-tuples will be resolved(committed/aborted) in a future
-c0kvms(dgen >= *d+1*).
+(2) committed after c0kvms(d) is frozen. These kv-tuples will be
+resolved(committed/aborted) in a future c0kvms(dgen >= *d+1*).
 
 As LC is already aware of the list of active transactions in an ingest
 operation, it can communicate a list of active TXIDs to WAL during
@@ -415,7 +416,7 @@ wal_nontx_replay(wal_file_list) {
         while ((wal_record = next_record(wal_file)) != EOL)
             add wal_record to an in-core non-tx list
 
-        For each nontx-op in non-tx list: // sorted LSN order
+        For each nontx-op in non-tx list: // sorted rid order
             insert nontx-op into active c0kvms;
 
 	ikvdb_flush(); // queue active c0kvms for ingest
@@ -471,7 +472,7 @@ wal_tx_replay(wal_file_list) {
     }
 
     For each committed txid in txn_list { // by commit-seqno order
-        For each tx-op in txid: // sorted LSN order
+        For each tx-op in txid: // sorted rid order
             wal_tx_write(tx-op);
     }
 
