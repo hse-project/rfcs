@@ -1,5 +1,3 @@
-# !!!! DRAFT - PLEASE DO NOT REVIEW !!!!
-
 # WAL Logical Design
 
 ## Problem
@@ -41,8 +39,8 @@ The data in c0 is volatile and is lost in the event of a crash or power loss.
 - **_dgen_** -- A monotonically increasing generation number assigned to each
   c0_kvmultiset
 
-- **_rid_** -- Record ID, a monotonically increasing unique number attached
-  to each kv-mutation
+- **_rid_** -- Record ID, a WAL managed monotonically increasing ID attached to
+  each kv-mutation
 
 - **_durability-interval_** -- All kv-mutations that occur before the configured
   durability interval (in ms) must not be lost in the event of a crash
@@ -148,15 +146,16 @@ At a high level, the WAL implementation will contain the following thread types:
 - A sync-notifier thread which wakes up the client threads that issued sync and
   are waiting for the durable boundary to reach a sync boundary.
 - A log reclamation thread that reclaims WAL files post cN ingest
-- One or more WAL replay threads employed for WAL replay
+- One or more WAL replay threads employed during WAL replay
 
 #### WAL Threads Workflow
 
 ```
 Ttimer: wal_timer()
 {
+    active_buflist = list of active WAL buffers;
     while (!timer_stop) {
-        if (timer_exipred || kv-size(active_buflist) > durability-size)
+        if (timer_exipred || pending-kv-bytes(active_buflist) > durability-size)
             for each buf in active_buflist
                 wakeup Tlog-flusher(buf);
     }
@@ -172,14 +171,15 @@ Tlog-flusher: log_flush(buf)
         flush_start = current flush_boundary(buf);
         flush_end = cur_write_pos(buf);
 
-        while (flush_boundary hasn't reached flush_end) {
+        while (flush_start < flush_end) {
             while (next_op is a hole)
                 wait for next_op to finish c0 update
-            advance flush_boundary by size(next_op);
+            advance flush_start by size(next_op);
         }
 
-        rg = buf[flush_start, flush_end]
+        rg = buf[flush_boundary(buf), flush_end]
         enqueue(log_writer_queue(buf), rg)
+        flush_boundary = flush_end;
 
         wakeup Tlog-writer(buf);
     }
@@ -253,7 +253,8 @@ can be named as *wal_\<dgen\>_\<id\>*.
 A record group is a sequence of one or more records (kv-tuples) accumulated in
 an WAL buffer in one durability/sync interval. All records in a record group
 except the last record have the continuation bit EORG=0. EORG=1 terminates a
-record group. Record group helps to establish checkpoints used during WAL replay.
+record group. Each record group establishes a checkpoint that's utilized during
+WAL replay.
 
 ```
   --------------------------------------------
@@ -291,7 +292,7 @@ TX-ABORT  <txid>
 TX-COMMIT <txid> <commit-seqno>
 TX-OP     <txid> <op> <cnid> <dgen> <seqno> <klen> <vlen> <kvdata>
 ```
-- __Record-Checksum__ = A checksum of Record-Header + Record-Data
+- __Record-Checksum__ = Checksum of (Record-Header + Record-Data)
 
 - __Txpinfo__ = List of active txids in the WAL file's dgen
 
@@ -315,12 +316,13 @@ The rid captures the arrival order of kv-mutations.
 Tclient: wal_op()/wal_txn_op()
 {
     buf  = NUMA local wal buffer;
-    len  = sizeof(wal_record) + klen + vlen;
+    len  = sizeof(record_header + record_data + cksum);
     woff = atomic64_fetch_add(len, buf->off);
     rid = atomic64_inc_return(&kvdb_rid);
 
     initialize record header and WAL record at buf[woff];
     copy key and value data into the WAL record;
+    compute checksum for the record
 }
 
 ```
@@ -338,15 +340,14 @@ before returning from ikvs_put().
 #### Tansaction writes
 
 A KVDB client txn is uniquely identified by its transaction id (TID).
-For a non-timestamped KVS, the view seqno bumped at tx begin is used
-as the transaction identifier.
+For a non-timestamped KVS, the view seqno bumped at tx begin serves
+as the TID.
 
 The HSE minted commit sequence number is sufficient to order client
-transactions at replay time. The rid can be used further to order
-operations within a transaction. If maintaining a global atomic for
-rid proves to be a bottleneck, then the rid could be a per-transaction
-entity for tx-mutations and the global atomic can be used purely for
-non-tx mutations.
+transactions at replay time. The rid is still used to order operations
+within a transaction. If maintaining a global atomic for rid proves to
+be a bottleneck, then we could have a per-transaction rid to order
+tx-mutations. The global rid can then be used purely for non-tx mutations.
 
 The ingest pipeline work imposes the following behavioral change on how
 transactions are implemented:
@@ -360,46 +361,46 @@ be reclaimed as it can contain active transaction kv-tuples that are
 required during WAL replay in the event of a crash.
 
 An approach to solve the above problem is as follows:
-(**TODO:** Still thinking if there's a simpler but lazy reclamation logic)
 
 During the ingest of a c0kvms with dgen *d*, the LC is populated with
 those txn kv-tuples that are either (1) active, i.e., uncommitted or
 (2) committed after c0kvms(d) is frozen. These kv-tuples will be
 resolved(committed/aborted) in a future c0kvms(dgen >= *d+1*).
 
-As LC is already aware of the list of active transactions in an ingest
-operation, it can communicate a list of active TXIDs to WAL during
-or post cN ingest. This interaction of LC with WAL is warranted, otherwise,
-tracking pending txn ids in WAL adds unnecessary complexity and duplicates
-state that LC already tracks. This information can be piggybacked in the
-cN ingest callback (*struct kvdb_callback*) which WAL can subscribe to.
+As the ingest thread/LC is aware of the list of active transactions in an
+ingest operation, it can communicate this list of active TXIDs in each
+ingested dgen to WAL. This interaction with WAL is warranted, otherwise,
+tracking active transactions in WAL adds unnecessary complexity and
+duplicates state that LC already tracks. This TXID list can be piggybacked
+in the cN ingest callback which WAL subscribes to.
 
-Using the callbacks from LC, WAL maintains a pending txid list in-core
-for each ingested dgen. As soon as WAL realizes that all pending
-txids for a dgen is resolved, the associated WAL file can be reclaimed
-as this file contents has been fully ingested into cN.
+Using the info from cN ingest callback, WAL maintains a pending TXID list
+in-core for each ingested dgen. As soon as WAL realizes that all pending
+TXIDs for a dgen has been resolved, it reclaims the WAL file(s) associated
+with that dgen as all the kv-tuples from this dgen finally made into cN.
 
 WAL also persists the txn pending list of dgen *d* in the *txpinfo*
-section of its associated WAL file.
+section of its associated frozen WAL file.
 
 During replay, the txn pending list is reconstituted from the *txpinfo*
 section for all dirty WAL files whose *dgen < ingest_dgen*. If the
 *txpinfo* section is not available due to a crash before this info
-got completely written into an WAL file, WAL replay can reconstitute this
+got completely written into the WAL file, WAL replay can reconstitute this
 information by parsing all the WAL records in the WAL file of interest.
 
 The WAL buffer space reclamation is simpler as the tx mutations are written
 into WAL as they occur and WAL doesn't need to wait for the txs to resolve
-prior to reclaiming it. The WAL replay path becomes a bit complicated,
-however, it's worth the additional time/space complexity for a rare
-crash/replay scenario.
+prior to reclaiming it.
 
 
 #### cN ingest
 
-c0 notifies WAL the dgen that was successfully ingested into cN.
-WAL writes an INGEST record to its MDC recording this dgen.
-
+WAL subscribes to the cN ingest notification callback. Post ingest of a
+dgen *d*, c0 invokes this callback passing the dgen, ingest status and
+a list of active TXIDs in dgen *d*. WAL updates its in-memory map of TXIDs,
+updates the *txpinfo* section of the WAL file _wal-\<dgen\>_, and writes an
+INGEST record to its MDC recording this dgen. A separate WAL reclaim thread
+processes the TXID map and reclaims one or more WAL files.
 
 ### WAL Replay Path
 
@@ -454,6 +455,9 @@ wal_tx_replay(wal_file_list) {
         d = dgen(wal_file);
         if (d <= ingest_dgen) {
             read tx_pending list from wal_file[txpoff];
+            if (txpoff section is incomplete or non-existent)
+                reconstruct tx_pending list from wal_file;
+
             add txid to the in-core tx_pending list against 'd';
 
             while ((wal_record = next_record(wal_file)) != EOL) {
@@ -528,7 +532,7 @@ merr_t wal_flush(struct wal *wal);
 merr_t wal_close(struct wal *wal);
 
 /**
- * wal_ingest_cb() - ikvdb cb registered by WAL to be invoked post cN ingest
+ * wal_ingest_cb() - callback registered by WAL to be invoked post cN ingest
  */
 merr_t wal_ingest_cb(struct ikvdb *ikvdb, uint64_t cnid, uint64_t seqno, uint64_t status,
                      int txidc, uint64_t *txidv);
@@ -624,12 +628,13 @@ merr_t wal_txn_abort(struct wal *wal, u64 txid);
 
 ## Failure and Recovery Handling
 
-Discussed in the WAL replay path section.
+The WAL Replay Path section covers failure and recovery handling.
 
 ## Testing Guidance
 
-All c1 tests written to exercise various crash/replay scenarios can be used
-for testing WAL.
+- Run Mongo and Ceph workloads with its default durability interval
+- Run test tools (c1_ingest, kvt, etc.) that was built to test the integrity
+  of the DB post crash and replay
 
 ## References
 
