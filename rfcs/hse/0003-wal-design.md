@@ -1,24 +1,26 @@
 # WAL Logical Design
 
 ## Problem
+
 The data in c0 is volatile and is lost in the event of a crash or power loss.
 
 ## Requirements
+
 - Provide durability to c0 data, i.e., honor both time and space-based
-  durability constraints. Provide KVDB parameters *dur_intvl_ms* and
-  *dur_size_bytes* for this purpose.
+  durability constraints. Provide KVDB parameters _dur_intvl_ms_ and
+  _dur_size_bytes_ for this purpose.
 - Maintain atomicity, consistency and isolation (ACI) semantics for
   transactional mutations during WAL replay
-- Support hse_kvdb_sync(bool async) API to make all committed txns and
-  completed non-txn ops until the sync point durable
-- Provide a checkpoint API (hse_kvdb_ckpt()) that syncs all outstanding
-  c0 data into cN. This makes the database files represent the current
-  committed state of the system to support snapshotting the underlying
-  FS/LV.
+- Support hse_kvdb_sync(bool async) API to make all committed txns and completed
+  non-txn ops until the sync point durable
+- Provide a checkpoint API (hse_kvdb_ckpt()) that syncs all outstanding c0 data
+  into cN. This makes the database files represent the current committed state
+  of the system to support snapshotting the underlying FS/LV.
 - The performance of HSE with WAL must match or exceed 1.9.0 with c1
 - Provide an option to disable WAL for the entire KVDB
 
 ## Non-Requirements
+
 - Support for synchronous (durable) transaction commits. The application can
   follow transaction commits with an explicit hse_kvdb_sync() for durability.
 - Support for timestampled-KVS, although hooks are added wherever possible to
@@ -35,7 +37,8 @@ The data in c0 is volatile and is lost in the event of a crash or power loss.
 
 - **_tx-KVS_** -- A key-value store that accepts only transactional writes
 
-- **_nontx-KVS_** -- A key-value store that accepts only non-transactional writes
+- **_nontx-KVS_** -- A key-value store that accepts only non-transactional
+  writes
 
 - **_timestamped KVS_** -- A key-value store that orders kv-tuples based on an
   application provided timestamp
@@ -53,56 +56,59 @@ The data in c0 is volatile and is lost in the event of a crash or power loss.
   durability interval (in ms) must not be lost in the event of a crash
 
 - **_durability-size_** -- All kv-mutations that got ingested prior to the last
-  ingested 'durability-size' worth of contents must not be lost in the event
-  of a crash
+  ingested 'durability-size' worth of contents must not be lost in the event of
+  a crash
 
-- **_WAL buffer_** -- A circular buffer used to stage c0 data before persisting it
-  into WAL
+- **_WAL buffer_** -- A circular buffer used to stage c0 data before persisting
+  it into WAL
 
 - **_durable-boundary_** -- A WAL buffer offset below which all data has been
   persisted into WAL. The offset range (cur-pos, _durable-boundary_) can be
   safely reclaimed.
 
 - **_flush-boundary_** -- A sequential WAL buffer offset range in which all data
-  has been filled by the client threads, i.e., there are no holes/gaps. This offset
-  range (_durable-boundary_, _flush-boundary_) is ready to be persisted into WAL.
-
+  has been filled by the client threads, i.e., there are no holes/gaps. This
+  offset range (_durable-boundary_, _flush-boundary_) is ready to be persisted
+  into WAL.
 
 ### WAL Invariants
 
 #### Non-transaction writes
 
-A non-transactional write can be issued *only* to a non-transactional KVS.
-There can be be more than one non-transactional KVS in a KVDB.
+A non-transactional write can be issued _only_ to a non-transactional KVS. There
+can be be more than one non-transactional KVS in a KVDB.
 
 _Invariants:_
-- **NTW1:** The ordering for non-transactional writes to the same key or different
-  keys within a single thread must be preserved during WAL replay.
-- **NTW2:**  In the event of a crash, all non-tx writes that occur within a single
-  thread must be replayed *only* up to some checkpoint and nothing beyond that.
-- **NTW3:** The ordering for non-tx writes that are carefully ordered by cooperating
-  threads, each thread modifying either unique or overlapping set of keys, must be
-  preserved during WAL replay.
-- **NTW4:** The ordering for non-tx writes issued concurrently by non-cooperating
-  threads, each thread modifying either unique or overlapping set of keys, may not
-  be preserved during WAL replay.
-- **NTW5:** The ordering for non-tx writes with respect to the other simultaneously
-  occurring non-tx/tx writes to one or more non-tx/tx KVSes respectively cannot
-  be preserved during WAL replay.
-- **NTW6:** Issuing WAL sync prior to cN ingest ensures that all non-tx kv-tuples
-  are persisted in WAL
+
+- **NTW1:** The ordering for non-transactional writes to the same key or
+  different keys within a single thread must be preserved during WAL replay.
+- **NTW2:** In the event of a crash, all non-tx writes that occur within a
+  single thread must be replayed _only_ up to some checkpoint and nothing beyond
+  that.
+- **NTW3:** The ordering for non-tx writes that are carefully ordered by
+  cooperating threads, each thread modifying either unique or overlapping set of
+  keys, must be preserved during WAL replay.
+- **NTW4:** The ordering for non-tx writes issued concurrently by
+  non-cooperating threads, each thread modifying either unique or overlapping
+  set of keys, may not be preserved during WAL replay.
+- **NTW5:** The ordering for non-tx writes with respect to the other
+  simultaneously occurring non-tx/tx writes to one or more non-tx/tx KVSes
+  respectively cannot be preserved during WAL replay.
+- **NTW6:** Issuing WAL sync prior to cN ingest ensures that all non-tx
+  kv-tuples are persisted in WAL
 
 #### Transaction writes
 
-A transactional write can be issued *only* to a transactional KVS.
-There can be be more than one transactional KVS in a KVDB.
+A transactional write can be issued _only_ to a transactional KVS. There can be
+be more than one transactional KVS in a KVDB.
 
 _Invariants:_
+
 - **TW1:** The atomicity of transactional writes issued to one or more txn-KVSes
   must be preserved during WAL replay.
 - **TW2:** The transactional writes must be ordered by their commit seqno during
   WAL replay.
-- **TW3:** In the event of a crash, all tx writes must be replayed *only* up to
+- **TW3:** In the event of a crash, all tx writes must be replayed _only_ up to
   some checkpoint and nothing beyond that.
 - **TW4:** The ordering for tx writes with respect to the other simultaneously
   occurring non-tx writes to one or more non-tx KVSes cannot be preserved during
@@ -110,12 +116,12 @@ _Invariants:_
 - **TW5:** Issuing WAL sync prior to cN ingest ensures that all committed tx
   kv-tuples are persisted in WAL
 
-
 ### WAL MDC
 
 There is one WAL MDC per KVDB to track WAL metadata.
 
 Here are some record types present in the WAL MDC:
+
 ```
 WAL_MDC_VERS:    version record to track WAL version
 WAL_MDC_INGEST:  ingest record to track ingested dgen
@@ -123,7 +129,6 @@ WAL_MDC_RECLAIM: reclaim record to track the last WAL file dgen that was reclaim
 WAL_MDC_CONFIG:  config record to track WAL capacity, durability parameters etc.
 WAL_MDC_CLOSE:   close record to indicate graceful KVDB shutdown
 ```
-
 
 ### WAL Data Buffers
 
@@ -133,12 +138,12 @@ before persisted on media.
 The following are the desirable properties for WAL buffers:
 
 - WAL buffers must not be a central point of contention for the client threads.
-- The total WAL buffer capacity must have an upper bound. If the WAL buffer usage
-  reaches certain high watermarks, the application threads should be throttled.
+- The total WAL buffer capacity must have an upper bound. If the WAL buffer
+  usage reaches certain high watermarks, the application threads should be
+  throttled.
 - WAL buffers and c0 can share the same in-memory buffers which cuts down an
   additional memory copy of the DB data.
 - WAL buffers should be NUMA aware to reduce access latencies
-
 
 ### WAL Threads
 
@@ -218,7 +223,6 @@ Tsync-notifier: sync_notify(buf)
 
 ```
 
-
 ### WAL files
 
 The WAL buffers are flushed to the WAL files under the following circumstances:
@@ -227,21 +231,22 @@ The WAL buffers are flushed to the WAL files under the following circumstances:
 - On meeting either the durability interval or durability size constraints
   defined for a KVDB.
 
-*How many WAL files?*
+_How many WAL files?_
 
 It has to be certainly more than one WAL file for parallelism. Also, having
 multiple files will simplify the reclamation of WAL disk space.
 
 A proposal is to have one or more WAL files exclusive to a dgen. An advantage
-with this approach is that it is easier to determine which files to discard
-post cN ingest.  If a dgen is backed by more than one WAL file, the WAL files
-can be named as *wal_\<dgen\>_\<id\>*.
+with this approach is that it is easier to determine which files to discard post
+cN ingest. If a dgen is backed by more than one WAL file, the WAL files can be
+named as _wal*\<dgen\>*\<id\>_.
 
 #### WAL file format
 
-- __WAL-File = File-Header + Record-Group * + Txpinfo__
+- **WAL-File = File-Header + Record-Group \* + Txpinfo**
 
-- __File-Header__ = A fixed-size header per file containing the following fields:
+- **File-Header** = A fixed-size header per file containing the following
+  fields:
 
 ```
   -----------------------------------------
@@ -255,7 +260,8 @@ can be named as *wal_\<dgen\>_\<id\>*.
   txpoff: start offset of the Txpinfo section
   cksum:  checksum of the preceding fields
 ```
-- __Record-Group = Record *__
+
+- **Record-Group = Record \***
 
 A record group is a sequence of one or more records (kv-tuples) accumulated in
 an WAL buffer in one durability/sync interval. All records in a record group
@@ -270,9 +276,11 @@ WAL replay.
   --------------------------------------------
        WAL Record Group ('m' records)
 ```
-- __Record = Record-Header + Record-Data + Record-Checksum__
 
-- __Record-Header__ = A fixed-size header per record containing the following fields:
+- **Record = Record-Header + Record-Data + Record-Checksum**
+
+- **Record-Header** = A fixed-size header per record containing the following
+  fields:
 
 ```
   ----------------------
@@ -289,7 +297,8 @@ WAL replay.
        WAL_RT_TXABORT:  tx abort record
   rid: Record ID
 ```
-- __Record-Data__ = Record data for tx and non-tx mutations
+
+- **Record-Data** = Record data for tx and non-tx mutations
 
 ```
 NONTX-OP <op> <cnid> <dgen> <seqno> <klen> <vlen> <kvdata>
@@ -299,26 +308,26 @@ TX-ABORT  <txid>
 TX-COMMIT <txid> <commit-seqno>
 TX-OP     <txid> <op> <cnid> <dgen> <seqno> <klen> <vlen> <kvdata>
 ```
-- __Record-Checksum__ = Checksum of (Record-Header + Record-Data)
+
+- **Record-Checksum** = Checksum of (Record-Header + Record-Data)
 
 Why not have checksum for the entire record group?
 
-(1) A checksum region needs to be reserved at the end of each record group.
-With a lock-free buffer continuously filled by several threads, it adds an
+(1) A checksum region needs to be reserved at the end of each record group. With
+a lock-free buffer continuously filled by several threads, it adds an
 unnecessary serialization point.
 
 (2) With checksum for each record, data can be streamed into the WAL buffer
 without dragging the data twice into memory.
 
-- __Txpinfo__ = List of active txids in the WAL file's dgen
+- **Txpinfo** = List of active txids in the WAL file's dgen
 
-*Key Points:*
+_Key Points:_
 
-- Both record group and records are variably sized. So, a record is never
-  broken down for framing which has the following benefits -
-  (1) Avoids framing related memory copies
-  (2) Enables c0 to share the key and value data from the WAL buffer
-
+- Both record group and records are variably sized. So, a record is never broken
+  down for framing which has the following benefits - (1) Avoids framing related
+  memory copies (2) Enables c0 to share the key and value data from the WAL
+  buffer
 
 ### WAL Logging Path
 
@@ -332,7 +341,6 @@ The rid captures the arrival order of kv-mutations.
 Values are written into WAL post c0 compression. The value length in c0 encodes
 both the compressed and uncompressed value lengths, so WAL doesn't need any
 additional metadata to track compressed values.
-
 
 ```
 Tclient: wal_op()/wal_txn_op()
@@ -351,78 +359,76 @@ Tclient: wal_op()/wal_txn_op()
 
 #### Non-transaction writes
 
-The HSE minted logical sequence number is not sufficient to order non-tx
-writes as it is not bumped for every non-tx op. WAL replay fully relies
-on rid to order non-tx kv-mutations.
+The HSE minted logical sequence number is not sufficient to order non-tx writes
+as it is not bumped for every non-tx op. WAL replay fully relies on rid to order
+non-tx kv-mutations.
 
-For non-tx writes, the seqno is not established prior to calling ikvs_put.
-The seqno can be filled in the WAL buffer by c0 once it's available, i.e.,
-before returning from ikvs_put().
+For non-tx writes, the seqno is not established prior to calling ikvs_put. The
+seqno can be filled in the WAL buffer by c0 once it's available, i.e., before
+returning from ikvs_put().
 
 #### Tansaction writes
 
-A KVDB client txn is uniquely identified by its transaction id (TID).
-For a non-timestamped KVS, the view seqno bumped at tx begin serves
-as the TID.
+A KVDB client txn is uniquely identified by its transaction id (TID). For a
+non-timestamped KVS, the view seqno bumped at tx begin serves as the TID.
 
-The HSE minted commit sequence number is sufficient to order client
-transactions at replay time. The rid is still used to order operations
-within a transaction. If maintaining a global atomic for rid proves to
-be a bottleneck, then we could have a per-transaction rid to order
-tx-mutations. The global rid can then be used purely for non-tx mutations.
+The HSE minted commit sequence number is sufficient to order client transactions
+at replay time. The rid is still used to order operations within a transaction.
+If maintaining a global atomic for rid proves to be a bottleneck, then we could
+have a per-transaction rid to order tx-mutations. The global rid can then be
+used purely for non-tx mutations.
 
 The ingest pipeline work imposes the following behavioral change on how
 transactions are implemented:
 
-(1) Transaction mutations can span across multiple c0kvmses/dgens
-(2) Transactions can remain active until the client decides to commit
-    it or the client/LC decides to abort it
+(1) Transaction mutations can span across multiple c0kvmses/dgens (2)
+Transactions can remain active until the client decides to commit it or the
+client/LC decides to abort it
 
-As a result of (1) and (2), the WAL files for an ingested dgen *d* cannot
-be reclaimed as it can contain active transaction kv-tuples that are
-required during WAL replay in the event of a crash.
+As a result of (1) and (2), the WAL files for an ingested dgen _d_ cannot be
+reclaimed as it can contain active transaction kv-tuples that are required
+during WAL replay in the event of a crash.
 
 An approach to solve the above problem is as follows:
 
-During the ingest of a c0kvms with dgen *d*, the LC is populated with
-those txn kv-tuples that are either (1) active, i.e., uncommitted or
-(2) committed after c0kvms(d) is frozen. These kv-tuples will be
-resolved(committed/aborted) in a future c0kvms(dgen >= *d+1*).
+During the ingest of a c0kvms with dgen _d_, the LC is populated with those txn
+kv-tuples that are either (1) active, i.e., uncommitted or (2) committed after
+c0kvms(d) is frozen. These kv-tuples will be resolved(committed/aborted) in a
+future c0kvms(dgen >= _d+1_).
 
-As the ingest thread/LC is aware of the list of active transactions in an
-ingest operation, it can communicate this list of active TXIDs in each
-ingested dgen to WAL. This interaction with WAL is warranted, otherwise,
-tracking active transactions in WAL adds unnecessary complexity and
-duplicates state that LC already tracks. This TXID list can be piggybacked
-in the cN ingest callback which WAL subscribes to.
+As the ingest thread/LC is aware of the list of active transactions in an ingest
+operation, it can communicate this list of active TXIDs in each ingested dgen to
+WAL. This interaction with WAL is warranted, otherwise, tracking active
+transactions in WAL adds unnecessary complexity and duplicates state that LC
+already tracks. This TXID list can be piggybacked in the cN ingest callback
+which WAL subscribes to.
 
 Using the info from cN ingest callback, WAL maintains a pending TXID list
-in-core for each ingested dgen. As soon as WAL realizes that all pending
-TXIDs for a dgen has been resolved, it reclaims the WAL file(s) associated
-with that dgen as all the kv-tuples from this dgen finally made into cN.
+in-core for each ingested dgen. As soon as WAL realizes that all pending TXIDs
+for a dgen has been resolved, it reclaims the WAL file(s) associated with that
+dgen as all the kv-tuples from this dgen finally made into cN.
 
-WAL also persists the txn pending list of dgen *d* in the *txpinfo*
-section of its associated frozen WAL file.
+WAL also persists the txn pending list of dgen _d_ in the _txpinfo_ section of
+its associated frozen WAL file.
 
-During replay, the txn pending list is reconstituted from the *txpinfo*
-section for all dirty WAL files whose *dgen < ingest_dgen*. If the
-*txpinfo* section is not available due to a crash before this info
-got completely written into the WAL file, WAL replay can reconstitute this
-information by parsing all the WAL records in the WAL file of interest.
+During replay, the txn pending list is reconstituted from the _txpinfo_ section
+for all dirty WAL files whose _dgen < ingest_dgen_. If the _txpinfo_ section is
+not available due to a crash before this info got completely written into the
+WAL file, WAL replay can reconstitute this information by parsing all the WAL
+records in the WAL file of interest.
 
-The WAL *buffer* space reclamation is simpler as the tx mutations are written
-into WAL as they occur and WAL doesn't need to wait for the txs to resolve
-prior to reclaiming an WAL buffer.
-
+The WAL _buffer_ space reclamation is simpler as the tx mutations are written
+into WAL as they occur and WAL doesn't need to wait for the txs to resolve prior
+to reclaiming an WAL buffer.
 
 #### cN ingest
 
-WAL subscribes to the cN ingest notification callback. Post ingest of a
-dgen *d*, c0 invokes this callback passing the dgen, ingest status and
-a list of active TXIDs in dgen *d*. WAL updates its in-memory map of TXIDs,
-updates the *txpinfo* section of the WAL file _wal-\<dgen\>_, and writes an
-INGEST record to its MDC recording this dgen. A separate WAL reclaim thread
-processes the TXID map and reclaims one or more WAL files.
+WAL subscribes to the cN ingest notification callback. Post ingest of a dgen
+_d_, c0 invokes this callback passing the dgen, ingest status and a list of
+active TXIDs in dgen _d_. WAL updates its in-memory map of TXIDs, updates the
+_txpinfo_ section of the WAL file _wal-\<dgen\>_, and writes an INGEST record to
+its MDC recording this dgen. A separate WAL reclaim thread processes the TXID
+map and reclaims one or more WAL files.
 
 ### WAL Replay Path
 
@@ -450,10 +456,9 @@ wal_nontx_replay(wal_file_list) {
 
 #### Transaction writes
 
-The key difference in replaying tx-writes compared to non-tx writes is that
-an WAL file whose dgen <= ingest_dgen can still contain pending transactional
+The key difference in replaying tx-writes compared to non-tx writes is that an
+WAL file whose dgen <= ingest_dgen can still contain pending transactional
 mutations and hence cannot be reclaimed/skipped until those are resolved.
-
 
 ```
 wal_tx_write(op) {
@@ -511,27 +516,26 @@ wal_tx_replay(wal_file_list) {
 
 Nested replay happens when there's a crash during WAL replay.
 
-The non-tx mutations shouldn't be a problem as they are replayed only
-from the WAL files whose dgen > the ingested dgen.
+The non-tx mutations shouldn't be a problem as they are replayed only from the
+WAL files whose dgen > the ingested dgen.
 
-For tx-mutations, all the remaining unreclaimed WAL files during the
-crash will be processed again during the next replay. It is possible that
-few resolved transactions from these unreclaimed WAL files got into cN
-during an earlier replay. The seqno of these ingested transactions would
-be smaller than the maximum seqno recorded by the last successful cN
-ingest during previous replay. This max ingest seqno can be used to
-avoid replaying a transaction more than once.
+For tx-mutations, all the remaining unreclaimed WAL files during the crash will
+be processed again during the next replay. It is possible that few resolved
+transactions from these unreclaimed WAL files got into cN during an earlier
+replay. The seqno of these ingested transactions would be smaller than the
+maximum seqno recorded by the last successful cN ingest during previous replay.
+This max ingest seqno can be used to avoid replaying a transaction more than
+once.
 
 #### Corrupted WAL file
 
 If there's a partial WAL replay in the event of a corrupted WAL file or
 otherwise unreadable WAL file -
 
-Fail the restart with an error indicating the WAL file is corrupt or
-unreadable, and then provide a force option to bring the KVDB online by
-replaying up to the corrupt/unreadable WAL file and then reclaiming the
-others (which is of course data loss).
-
+Fail the restart with an error indicating the WAL file is corrupt or unreadable,
+and then provide a force option to bring the KVDB online by replaying up to the
+corrupt/unreadable WAL file and then reclaiming the others (which is of course
+data loss).
 
 ### WAL Interfaces - Control Path
 
@@ -584,7 +588,6 @@ merr_t wal_close(struct wal *wal);
 merr_t wal_ingest_cb(struct ikvdb *ikvdb, uint64_t cnid, uint64_t seqno, uint64_t status,
                      int txidc, uint64_t *txidv);
 ```
-
 
 ### WAL Interfaces - Data Path
 
@@ -680,8 +683,8 @@ The WAL Replay Path section covers failure and recovery handling.
 ## Testing Guidance
 
 - Run Mongo and Ceph workloads with its default durability interval
-- Run test tools (c1_ingest, kvt, etc.) that was built to test the integrity
-  of the DB post crash and replay
+- Run test tools (c1_ingest, kvt, etc.) that was built to test the integrity of
+  the DB post crash and replay
 
 ## References
 

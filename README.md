@@ -80,7 +80,7 @@ accepted means that the implementation will be prioritized by the maintainers.
 External contributors or stakeholders are welcome to implement the RFC
 themselves if the work is not prioritized to their liking. The accepted RFC will
 then get a tracking issue on the repository of the project with a link to the
-RFC (TODO: create a github issue template for this).
+RFC.
 
 In the case the RFC has been denied, the PR will be declined. It is important to
 understand that not all RFCs can be accepted. Reasons for declining an RFC could
