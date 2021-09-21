@@ -86,3 +86,14 @@ In the case the RFC has been denied, the PR will be declined. It is important to
 understand that not all RFCs can be accepted. Reasons for declining an RFC could
 be could be misalignment with project goals, negative impact to performance, or
 API/ABI breakage, among others.
+
+## Formatting Markdowns
+
+Use the following steps to format the markdown files before checking in.
+
+```shell
+yarn
+yarn format
+# Only check if format is valid
+yarn format:ci
+```
