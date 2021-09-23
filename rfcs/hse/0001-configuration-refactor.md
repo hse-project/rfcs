@@ -11,10 +11,8 @@ and open to advanced configuration by end-users.
 - HSE should be usable with sane defaults
 - Support more than one KVDB per process open at any time in the future without
   breaking current configuration
-- Remove configuration files
 - Remove notion of workload profiles
 - Introduce notion of KVDB home for some use cases
-- Allow HSE logs and KVDB logs to go to the same location
 
 ## Non-Requirements
 
@@ -62,83 +60,72 @@ to their liking.
 ##### API Changes
 
 HSE will lose any notion of `hse_params`. Where `struct hse_params` is being
-passed to APIs, that will become a `const char *config`. In order to better
-support application developers, HSE will gain two new APIs.
+passed to APIs, that will become a `const char *config`. HSE APIs will change in
+the following ways:
 
 ```c
-/* hse_config_merge() will allow application developers to pass the config
- * strings that they have configured, and merge a user's given config string
- * with theirs. This function will assume both configs are valid.
- *
- * Ex:
- *
- * char *merged_config;
- * err = hse_config_merge(my_config, user_config, &merged_config);
- * assert(err == 0);
- */
 hse_err_t
-hse_config_merge(const char *current, const char *incoming, char **merged);
+hse_init(const char *config, size_t paramc, const char *const *paramv);
 
-/* hse_config_valid() will take a config string and say whether or not the user
- * has configured a valid string. It returns a boolean. If a non-NULL buf is
- * passed, HSE will fill the buf with useful messages for helping debug the
- * config. Each message will be newline separated until the buf is full. HSE
- * will NUL-terminate the buffer.
- *
- * Ex:
- *
- * char buf[1024];
- * if (!hse_config_valid(my_config, buf, sizeof(buf))) {
- *   fprintf(stderr, "Invalid HSE config string:\n\n%s", buf);
- * }
- */
-bool
-hse_config_valid(const char *config, char *buf, size_t buf_len);
+hse_err_t
+hse_kvdb_create(const char *kvdb_home, size_t paramc, const char *const *paramv);
+
+hse_err_t
+hse_kvdb_open(const char *kvdb_home, size_t paramc, const char *const *paramv, struct hse_kvdb **kvdb);
+
+hse_err_t
+hse_kvdb_kvs_create(struct hse_kvdb *kvdb, const char *kvs_name, size_t paramc, const char *const *paramv);
+
+hse_err_t
+hse_kvdb_kvs_open(struct hse_kvdb *kvdb, const char *kvs_name, size_t paramc, const char *const *paramv, struct hse_kvs **kvs);
 ```
 
-`hse_config_valid()` will be used by the CLI to validate config strings through
-a new `hse config validate` subcommand in the future as well.
+`paramv` will be an array of `key=value` strings where `paramc` is the size of
+said array. The key will be something like `prefix.length` and the value will be
+something like `5`. Combined that will look like `prefix.length=5`.
 
-The same CLI for setting config options of `key=value` will continue to work,
-but implemented outside of `libhse`.
+##### Config File Formats
 
-##### Config String Format
+HSE will have two config file formats. One for HSE global parameters and another
+for KVDB/KVS parameters. They will both be JSON files.
 
-The config string will be a JSON-formatted string. We already have a dependency
-on cJSON so this should not be anything new. The config string format should
-feel pretty similar to our previous config file format.
-
-All KVDB parameters will be located under the `kvdb` keyword. KVS parameters
-will be located under the `kvs` key, which is located under the `kvdb` key. The
-`default` keyword under `kvs` will be reserved for parameters which apply to all
-KVSs. The outcome of this is that no KVS can be named `default`. KVS-specific
-parameters will exist under the name of the KVS within the `kvs` keyword.
-KVS-specific parameters will override any listed under `default`.
-
-Config strings will be KVDB-scoped, meaning an application should expose one
-config string option per KVDB if it sees fit.
+###### hse.conf
 
 ```jsonc
 {
   "logging": {
     // later in document
-  },
-  "kvdb": {
-    "logging": {
-      // Later in document
+  }
+  // ...
+}
+```
+
+###### kvdb.conf
+
+```jsonc
+{
+  "read_only": "...",
+  "kvs": {
+    "default": {
+      "prefix": {
+        "length": 5
+      }
     },
-    "my_kvdb_param": true,
-    "kvs": {
-      "default": {
-        "my_kvs_param": 1
-      },
-      "kvs1": {
-        "my_kvs_open_param": 2
+    "mykvs": {
+      "prefix": {
+        "length": 3
       }
     }
   }
 }
 ```
+
+KVS parameters will be located under the `kvs` key, which is located under the
+`kvdb` key. The `default` keyword under `kvs` will be reserved for parameters
+which apply to all KVSs. The outcome of this is that no KVS can be named
+`default`. KVS-specific parameters will exist under the name of the KVS within
+the `kvs` keyword. KVS-specific parameters will override any listed under
+`default`.
 
 ##### KVDB Home Directory
 
@@ -147,40 +134,18 @@ together, a `home` has been provided. Per-artifact overrides as described below
 will take precedence over `home`. In order to make sure home directories are
 exclusive, a PID file will be created called `kvdb.pid`.
 
-Schema:
-
-```jsonc
-{
-  "kvdb": {
-    "home": "string"
-  }
-}
-```
-
-Default Configuration:
-
-```jsonc
-{
-  "kvdb": {
-    "home": "$CWD"
-  }
-}
-```
-
 ##### Media Class Storage
 
 Schema:
 
 ```jsonc
 {
-  "kvdb": {
-    "storage": {
-      "staging": {
-        "path": "" // staging won't be configured by default
-      },
-      "capacity": {
-        "path": "string"
-      }
+  "storage": {
+    "staging": {
+      "path": "string" // staging won't be configured by default
+    },
+    "capacity": {
+      "path": "string"
     }
   }
 }
@@ -193,10 +158,10 @@ Default Configuration:
   "kvdb": {
     "storage": {
       "staging": {
-        "path": ""
+        "path": null
       },
       "capacity": {
-        "path": "${kvdb.home}/capacity"
+        "path": "${kvdb_home}/capacity"
       }
     }
   }
@@ -205,21 +170,9 @@ Default Configuration:
 
 ##### Logging
 
-Outside of KVDBs (after `hse_init()`, before `hse_kvdb_open()`) HSE needs a
-place to log messages to. In the past, that has been `stderr`. HSE needs to stop
-logging messages to `stderr`/`stdout` by default while also allowing locations
-of these messages to be configurable. `hse_init()` will therefore need to take a
-config string. `hse_init()` will look at the root-level `logging` key, which
-will have the same schema as `kvdb.logging`.
-
-```c
-hse_err_t
-hse_init(const char *config);
-```
-
-HSE should support `logging.path` and `kvdb.logging.path` pointing to the same
-file/destination if that is how the user chose to configure their setup. This
-will be the default setup.
+Logs by default will continue to go to `syslog`. Logging will be configured in
+the `hse.conf` file under the `logging` key or `logging.xxxxx=yyyyy` in the
+`hse_init()` API.
 
 Schema:
 
@@ -230,7 +183,7 @@ Schema:
     "structured": "boolean",
     "destination": "file | syslog | stdout | stderr",
     "path": "when destination == file",
-    "level": "[0 - 7]" // support string style as well?
+    "level": "[0 - 7]"
   }
 }
 ```
@@ -243,7 +196,7 @@ Default Configuration:
     "enabled": true,
     "structured": false,
     "destination": "file",
-    "path": "$PWD/hse.log in the case of HSE logging and ${kvdb.home}/hse.log in the case of KVDB logging", // both logging.path and kvdb.logging.path will point to the same log file by default
+    "path": "${kvdb_home}", // both logging.path and kvdb.logging.path will point to the same log file by default
     "level": 7
   }
 }
@@ -255,17 +208,18 @@ will support 4 destinations for those logs. Log levels will mirror those from
 
 ##### UNIX Socket
 
-For each KVDB within a process, there will be a UNIX socket for interacting with
-that KVDB.
+Unix socket paths are limited to 107 characters plus 1 for the `NUL` byte. By
+default socket paths will be `/tmp/hse-$PID.sock`, but will be configurable to a
+custom path as long as said path is within the length limits. The socket can be
+disabled using the `socket.enabled` parameter.
 
 Schema:
 
 ```jsonc
 {
-  "kvdb": {
-    "socket": {
-      "path": "string"
-    }
+  "socket": {
+    "enabled": "boolean",
+    "path": "string"
   }
 }
 ```
@@ -274,10 +228,9 @@ Default Configuration:
 
 ```jsonc
 {
-  "kvdb": {
-    "socket": {
-      "path": "${kvdb.home}/kvdb.sock"
-    }
+  "socket": {
+    "enabled": true,
+    "path": "/tmp/hse-$PID.sock"
   }
 }
 ```
@@ -296,10 +249,3 @@ account for the new way of configuration.
 
 New tests will be added and old tests will be changed as internals change around
 configuration.
-
-## Additional Considerations
-
-- Worth changing make/drop terminology?
-  - If we were consistent with databases, the terminology would be create/drop
-  - Move to create/destroy? Seem to be using destroy a lot with the discussion
-    around libmpool
