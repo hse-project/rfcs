@@ -8,7 +8,7 @@ Internal CN tree statistics are confusing, redundant, misleading and inefficient
    structures.  For example, `key_stats.tot_vlen`, `kblk_metrics.tot_val_bytes`,
    and `kvset_metrics.tot_val_bytes` all track the same statistic.
 1. `kvset_metric` and `kvset_stats` are redundant. We should pick one.
-1. Many metrics don't measure what their name implies.  See *Misleading statistics*.
+1. Many metrics don't measure what their name implies.  See [Misleading statistics](#Misleading-statistics).
 1. `kvset_metrics` is computed on demand, requires a node lock, and has to
    iterate over all kblocks in the kvset -- despite the fact that they never
    change for the life of a kvset.
@@ -22,8 +22,8 @@ Internal CN tree statistics are confusing, redundant, misleading and inefficient
 1. `key_stats.tot_vlen`, `kblk_metrics.tot_val_bytes`,
    `kvset_metrics.tot_val_bytes`: These measure the total on-media length of all
    values associated with key/kblock/kvset.  It would be nice to have more
-   detail such as: length of vals in kblocks (VTYPE_IVAL) or maybe just lengths
-   of values by type (enum kmd_type).
+   detail such as: length of vals in kblocks (`VTYPE_IVAL`) or maybe just lengths
+   of values by type (`enum kmd_type`).
 1. `kvset_metrics.num_keys` measures number of keys. It includes keys with
    tombstones but not keys with prefix tombstones.
 1. `kvset_metrics.tot_key_bytes` measures sum of key lengths. In includes keys
@@ -38,7 +38,7 @@ Internal CN tree statistics are confusing, redundant, misleading and inefficient
 
 1. Reduce the number of stat struct types.
 1. Simplify on-media storage of stats.
-1. Eliminate misleading stats.
+1. Eliminate [Misleading statistics](#Misleading-statistics).
 1. Eliminate the need to compute kvset level stats by iterating over all kblocks in kvset.
 
 ### Details
@@ -50,7 +50,7 @@ Internal CN tree statistics are confusing, redundant, misleading and inefficient
 1. In `struct kvset_stats`, store `vlen` and `vcount` stats for each `enum
    kmd_vtype` and eliminate special named fields such as `nptombs`.
    - Advantages:
-     - Eliminates all problems identified in "Misleading Statistics".
+     - Eliminates all problems identified in [Misleading statistics](#Misleading-statistics).
 
 1. Store kvset-specific instances of the `one_stat_struct` in kvset hblocks
    and remove related data them from CNDB.
@@ -60,10 +60,10 @@ Internal CN tree statistics are confusing, redundant, misleading and inefficient
      - Simplify kvset open process.
 
 1. Store kblock-specific members of `struct kvset_stats` in kblock headers for
-   use during node split.  But in the provide access to it in memory as an
-   instance of `struct kvset_stats`.
+   use during node split, but provide access to it in memory as an instance of
+   `struct kvset_stats`.
    - Advantages:
-       - Eliminate need for `struct kblk_metrics`
+     - Eliminate need for `struct kblk_metrics`
      - Dead simple to compute kvset stats from kblock stats.
 
 1. Use `struct kvset_stats` with kvset builders instead of `struct key_stats`.
@@ -82,7 +82,8 @@ Internal CN tree statistics are confusing, redundant, misleading and inefficient
 ### struct key_stats
 Used by kvset builder to track statistics about a key's values during kvset
 construction.
-```
+
+```c
 struct key_stats {
     uint nvals;
     uint ntombs;
@@ -97,7 +98,8 @@ struct key_stats {
 
 ### struct kblk_metrics
 Read from kblock header during kvset_open().
-```
+
+```c
 struct kblk_metrics {
     u32 num_keys;
     u32 num_tombstones;
@@ -112,7 +114,8 @@ struct kblk_metrics {
 ### struct kvset_stats
 Designed to be "rolled up" to provide useful info about kvsets, nodes, KVS's
 and KVDBs.  The primary struct for managing space amp.
-```
+
+```c
 struct kvset_stats {
     uint64_t kst_keys;      // number of keys
     uint64_t kst_tombs;     // number of tombtones
@@ -132,7 +135,8 @@ struct kvset_stats {
 
 ### struct kvset_metrics
 Originally implemented to support offline tree statistics (cn_metrics.c).
-```
+
+```c
 struct kvset_metrics {
     uint64_t num_keys;
     uint64_t num_tombstones;
@@ -155,7 +159,8 @@ struct kvset_metrics {
 ### struct kvset_meta
 Used by CN and CNDB to store metadata about a KVSET in CNDB.  Not really a
 "stats" struct, but it contains some statistics such as "vused" and "compc".
-```
+
+```c
 struct kvset_meta {
     uint64_t km_dgen;
     uint64_t km_vused;
@@ -169,7 +174,8 @@ struct kvset_meta {
 
 ### struct cn_node_stats
 Used for primarily for compaction.
-```
+
+```c
 struct cn_node_stats {
     struct kvset_stats ns_kst; // Sum of kvset stats for all kvsts in node
     uint64_t ns_keys_uniq;     // number of unique keys (estimated from HyperLogLog stats)
