@@ -77,7 +77,57 @@ Internal CN tree statistics are confusing, redundant, misleading and inefficient
        compacted kvset (it equals the vblock size minus overhead such as headers
        and padding).
 
-## Current stat struct definitions
+#### Proposed data structure to replace kvset_metrics and kvset_stats
+
+The following definitions will replace `struct kvset_metrics` and `struct kvset_stats`.
+
+```
+/* Stats about items stored on-media
+ *
+ * Statistics about keys, values, kblocks, etc. all of which are stored
+ * on-media.
+ *
+ * Notes on omlen vs ulen:
+ * - Member 'omlen' refers the amount of storage used to hold the items, while
+ *   'ulen' refers the size of the items from the user's perspective.
+ * - For items such as keys and values, 'omlen' will be less than 'ulen' due to
+ *   longest common prefix elimination (keys) and compression (values).
+ * - For items such as hblocks and kblocks, 'omlen' will greater than 'ulen' due
+ *   to padding and allocation overhead.
+ */
+struct om_stats {
+    uint64_t count;  // Number of items on media
+    uint64_t omlen;  // On-media length of items, in bytes
+    uint64_t ulen;   // User length of items, in bytes
+};
+
+/* Key and value statistics.
+ *
+ * This struct is used for kvset, node and tree stats.
+ */
+struct kvstats {
+    struct om_stats vtype[NUM_KMD_VTYPES]; // on-media stats for values by vtype
+    struct om_stats keys;       // on-media stats for keys
+    struct om_stats hblock;     // on-media stats for hblocks
+    struct om_stats kblock;     // on-media stats for kblocks
+    struct om_stats vblock;     // on-media stats for vblocks
+    uint64_t vblk_vlen_unref;   // On-media length of vblock values not referenced by any key
+    uint32_t kvsets;            // Number of kvsets (for node and tree-level stats)
+};
+```
+
+Some nice things about `struct kvstat`:
+- It can be applied to kblocks, kvsets, nodes, trees (KVS's) and even entire KVDBs.
+- Data about value types, keys, and even mblocks is stored in common type `struct omlen`.
+
+Some not so nice things:
+- It is larger than it needs to be when used at lower levels in the system.  For
+  example, when used for kblocks, the `kvsets`, `hblock` and `vblock` struct members
+  are not used.
+- Three of the six currently existing value types have no length, so the `omlen`
+  and `ulen` fields will always be zero.
+
+## Existing Data Structure Definitions
 
 ### struct key_stats
 Used by kvset builder to track statistics about a key's values during kvset
