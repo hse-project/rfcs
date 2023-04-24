@@ -9,6 +9,6 @@
     "format:ci": "prettier --config .prettierrc.yml --check '**/*.md'"
   },
   "devDependencies": {
-    "prettier": "^2.8.4"
+    "prettier": "^2.8.8"
   }
 }
